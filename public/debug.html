@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>节点创建调试测试</title>
+</head>
+<body>
+    <h1>节点创建调试测试</h1>
+    
+    <div>
+        <h3>1. 登录测试</h3>
+        <input type="text" id="username" placeholder="用户名" value="admin">
+        <input type="password" id="password" placeholder="密码" value="admin123">
+        <button onclick="testLogin()">登录</button>
+        <div id="loginResult"></div>
+    </div>
+    
+    <div>
+        <h3>2. 创建节点测试</h3>
+        <input type="text" id="nodeName" placeholder="节点名称" value="测试节点01">
+        <input type="text" id="nodeLocation" placeholder="位置（可空）">
+        <input type="text" id="nodeProvider" placeholder="提供商（可空）">
+        <button onclick="testCreateNode()">创建节点</button>
+        <div id="createResult"></div>
+    </div>
+
+    <script>
+        let authToken = null;
+        const API_BASE = window.location.origin;
+
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                console.log('登录响应:', data);
+                
+                if (data.success) {
+                    authToken = data.token;
+                    document.getElementById('loginResult').innerHTML = '✅ 登录成功';
+                } else {
+                    document.getElementById('loginResult').innerHTML = `❌ 登录失败: ${data.error}`;
+                }
+            } catch (error) {
+                console.error('登录错误:', error);
+                document.getElementById('loginResult').innerHTML = `❌ 登录错误: ${error.message}`;
+            }
+        }
+
+        async function testCreateNode() {
+            if (!authToken) {
+                alert('请先登录');
+                return;
+            }
+
+            const name = document.getElementById('nodeName').value.trim();
+            const location = document.getElementById('nodeLocation').value.trim();
+            const provider = document.getElementById('nodeProvider').value.trim();
+            
+            console.log('发送数据:', { name, location, provider });
+
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/nodes`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ 
+                        name, 
+                        location: location || 'Auto-detect',
+                        provider: provider || 'Auto-detect'
+                    })
+                });
+                
+                console.log('响应状态:', response.status);
+                console.log('响应头:', [...response.headers.entries()]);
+                
+                const responseText = await response.text();
+                console.log('响应原文:', responseText);
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    throw new Error(`无法解析JSON: ${responseText}`);
+                }
+                
+                console.log('解析后数据:', data);
+                
+                if (data.success) {
+                    document.getElementById('createResult').innerHTML = `✅ 创建成功: 节点ID ${data.nodeId}`;
+                } else {
+                    document.getElementById('createResult').innerHTML = `❌ 创建失败: ${data.error}`;
+                }
+            } catch (error) {
+                console.error('创建节点错误:', error);
+                document.getElementById('createResult').innerHTML = `❌ 创建错误: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
