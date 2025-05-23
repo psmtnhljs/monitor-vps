@@ -5,10 +5,14 @@ const { generateAPIKey, generateClientCode } = require('../utils/helpers');
 
 const router = express.Router();
 
+console.log('✅ Admin routes loaded');
+
 // 获取系统配置
 router.get('/config', authenticateToken, (req, res) => {
+    console.log('🔧 获取系统配置请求');
     db.all('SELECT config_key, config_value FROM system_config', (err, rows) => {
         if (err) {
+            console.error('❌ 获取配置失败:', err);
             return res.status(500).json({ error: '获取配置失败' });
         }
 
@@ -17,6 +21,7 @@ router.get('/config', authenticateToken, (req, res) => {
             config[row.config_key] = row.config_value;
         });
 
+        console.log('✅ 配置获取成功');
         res.json(config);
     });
 });
@@ -24,6 +29,7 @@ router.get('/config', authenticateToken, (req, res) => {
 // 更新系统配置
 router.post('/config', authenticateToken, (req, res) => {
     const { key, value } = req.body;
+    console.log(`🔧 更新配置: ${key} = ${value}`);
 
     if (!key || value === undefined) {
         return res.status(400).json({ error: '配置键和值不能为空' });
@@ -34,15 +40,18 @@ router.post('/config', authenticateToken, (req, res) => {
         VALUES (?, ?, CURRENT_TIMESTAMP)
     `, [key, value], function(err) {
         if (err) {
+            console.error('❌ 更新配置失败:', err);
             return res.status(500).json({ error: '更新配置失败' });
         }
 
+        console.log('✅ 配置更新成功');
         res.json({ success: true, message: '配置更新成功' });
     });
 });
 
 // 重新生成API密钥
 router.post('/regenerate-api-key', authenticateToken, (req, res) => {
+    console.log('🔑 重新生成API密钥请求');
     const newAPIKey = generateAPIKey();
 
     db.run(`
@@ -51,38 +60,92 @@ router.post('/regenerate-api-key', authenticateToken, (req, res) => {
         WHERE config_key = 'api_key'
     `, [newAPIKey], function(err) {
         if (err) {
+            console.error('❌ 重新生成API密钥失败:', err);
             return res.status(500).json({ error: '重新生成API密钥失败' });
         }
 
+        console.log('✅ API密钥重新生成成功');
         res.json({ success: true, apiKey: newAPIKey });
     });
 });
 
-// 获取所有节点（管理员）
+// 获取所有节点（管理员）- 最简版本
 router.get('/nodes', authenticateToken, (req, res) => {
+    console.log('🌐 管理员请求节点列表...');
+    
+    // 使用最简单的查询，避免复杂的SQL
     db.all(`
         SELECT 
             id, name, location, provider, ip_address, status, is_placeholder,
-            country_code, country_name, city, isp,
-            last_seen,
-            datetime(last_seen, 'localtime') as last_seen_local,
-            CASE 
-                WHEN is_placeholder = 1 THEN 'placeholder'
-                WHEN datetime(last_seen) > datetime('now', '-6 minutes') THEN 'online'
-                WHEN datetime(last_seen) > datetime('now', '-15 minutes') THEN 'warning'
-                ELSE 'offline'
-            END as connection_status,
-            ROUND((julianday('now') - julianday(last_seen)) * 24 * 60, 1) as minutes_since_last_seen,
-            (SELECT COUNT(*) FROM test_results WHERE node_id = vps_nodes.id) as total_tests
+            last_seen
         FROM vps_nodes 
-        ORDER BY is_placeholder DESC, connection_status ASC, name
+        ORDER BY is_placeholder DESC, id DESC
     `, (err, rows) => {
         if (err) {
-            console.error('获取管理员节点列表失败:', err);
-            return res.status(500).json({ error: '查询失败' });
+            console.error('❌ 获取节点列表失败:', err);
+            return res.status(500).json({ 
+                error: '查询失败', 
+                details: err.message 
+            });
         }
         
-        res.json(rows);
+        console.log(`✅ 查询成功，返回 ${rows.length} 个节点`);
+        
+        // 手动处理数据，添加缺失的字段
+        const processedRows = rows.map(row => {
+            // 计算连接状态
+            let connection_status = 'offline';
+            if (row.is_placeholder) {
+                connection_status = 'placeholder';
+            } else if (row.last_seen) {
+                const lastSeenTime = new Date(row.last_seen);
+                const now = new Date();
+                const diffMinutes = (now - lastSeenTime) / (1000 * 60);
+                
+                if (diffMinutes <= 6) {
+                    connection_status = 'online';
+                } else if (diffMinutes <= 15) {
+                    connection_status = 'warning';
+                } else {
+                    connection_status = 'offline';
+                }
+            }
+            
+            return {
+                id: row.id,
+                name: row.name,
+                location: row.location || 'Auto-detect',
+                provider: row.provider || 'Auto-detect',
+                ip_address: row.ip_address || null,
+                status: row.status || 0,
+                is_placeholder: row.is_placeholder || 0,
+                last_seen: row.last_seen || new Date().toISOString(),
+                connection_status: connection_status,
+                country_code: null,
+                country_name: null,
+                city: null,
+                isp: null,
+                total_tests: 0,
+                minutes_since_last_seen: row.last_seen ? 
+                    Math.round((new Date() - new Date(row.last_seen)) / (1000 * 60)) : null
+            };
+        });
+        
+        // 分类统计
+        const placeholderNodes = processedRows.filter(r => r.is_placeholder);
+        const realNodes = processedRows.filter(r => !r.is_placeholder);
+        
+        console.log(`📊 空白节点: ${placeholderNodes.length} 个`);
+        console.log(`📊 真实节点: ${realNodes.length} 个`);
+        
+        if (placeholderNodes.length > 0) {
+            console.log('🔍 空白节点列表:');
+            placeholderNodes.forEach(node => {
+                console.log(`  ID: ${node.id}, 名称: ${node.name}`);
+            });
+        }
+        
+        res.json(processedRows);
     });
 });
 
@@ -90,36 +153,55 @@ router.get('/nodes', authenticateToken, (req, res) => {
 router.post('/nodes', authenticateToken, (req, res) => {
     const { name, location, provider } = req.body;
     
-    console.log('接收到创建节点请求:', { name, location, provider });
+    console.log('🚀 创建空白节点请求:', { name, location, provider });
     
     if (!name || name.trim() === '') {
+        console.log('❌ 节点名称为空');
         return res.status(400).json({ error: '节点名称不能为空' });
     }
 
-    // 位置和提供商可以为空，将由客户端自动获取
-    const finalLocation = (location && location !== 'Auto-detect') ? location : 'Auto-detect';
-    const finalProvider = (provider && provider !== 'Auto-detect') ? provider : 'Auto-detect';
+    const finalName = name.trim();
+    const finalLocation = (location && location.trim()) ? location.trim() : 'Auto-detect';
+    const finalProvider = (provider && provider.trim()) ? provider.trim() : 'Auto-detect';
     
-    console.log('处理后的数据:', { name: name.trim(), finalLocation, finalProvider });
+    console.log('📝 处理后的数据:', { 
+        name: finalName, 
+        location: finalLocation, 
+        provider: finalProvider 
+    });
 
-    db.run(`
-        INSERT INTO vps_nodes (name, location, provider, is_placeholder, status) 
-        VALUES (?, ?, ?, 1, 0)
-    `, [name.trim(), finalLocation, finalProvider], function(err) {
-        if (err) {
-            console.error('创建节点数据库错误:', err);
-            if (err.code === 'SQLITE_CONSTRAINT') {
-                return res.status(400).json({ error: '节点名称已存在' });
-            }
-            return res.status(500).json({ error: `数据库错误: ${err.message}` });
+    // 检查节点名称是否已存在
+    db.get('SELECT id FROM vps_nodes WHERE name = ?', [finalName], (checkErr, existingNode) => {
+        if (checkErr) {
+            console.error('❌ 检查节点名称失败:', checkErr);
+            return res.status(500).json({ error: '数据库查询失败' });
         }
         
-        console.log('节点创建成功，ID:', this.lastID);
+        if (existingNode) {
+            console.log('❌ 节点名称已存在:', existingNode.id);
+            return res.status(400).json({ error: '节点名称已存在，请使用不同的名称' });
+        }
         
-        res.json({
-            success: true,
-            nodeId: this.lastID,
-            message: '空白节点创建成功'
+        // 创建新的空白节点
+        console.log('💾 开始插入新节点...');
+        
+        db.run(`
+            INSERT INTO vps_nodes (name, location, provider, is_placeholder, status) 
+            VALUES (?, ?, ?, 1, 0)
+        `, [finalName, finalLocation, finalProvider], function(err) {
+            if (err) {
+                console.error('❌ 创建节点失败:', err);
+                return res.status(500).json({ error: `数据库错误: ${err.message}` });
+            }
+            
+            const newNodeId = this.lastID;
+            console.log(`✅ 空白节点创建成功! ID: ${newNodeId}`);
+            
+            res.json({
+                success: true,
+                nodeId: newNodeId,
+                message: '空白节点创建成功'
+            });
         });
     });
 });
@@ -128,190 +210,101 @@ router.post('/nodes', authenticateToken, (req, res) => {
 router.delete('/nodes/:nodeId', authenticateToken, (req, res) => {
     const { nodeId } = req.params;
     
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
+    console.log(`🗑️ 删除节点请求: ID ${nodeId}`);
+    
+    // 先删除测试记录，再删除节点
+    db.run('DELETE FROM test_results WHERE node_id = ?', [nodeId], function(testErr) {
+        if (testErr) {
+            console.error('❌ 删除测试记录失败:', testErr);
+            return res.status(500).json({ error: '删除测试记录失败' });
+        }
         
-        // 删除测试记录
-        db.run('DELETE FROM test_results WHERE node_id = ?', [nodeId], function(testErr) {
-            if (testErr) {
-                db.run('ROLLBACK');
-                return res.status(500).json({ error: '删除测试记录失败' });
+        const deletedTests = this.changes;
+        console.log(`🗑️ 删除了 ${deletedTests} 条测试记录`);
+        
+        // 删除节点
+        db.run('DELETE FROM vps_nodes WHERE id = ?', [nodeId], function(nodeErr) {
+            if (nodeErr) {
+                console.error('❌ 删除节点失败:', nodeErr);
+                return res.status(500).json({ error: '删除节点失败' });
             }
             
-            const deletedTests = this.changes;
+            if (this.changes === 0) {
+                console.log('❌ 节点不存在:', nodeId);
+                return res.status(404).json({ error: '节点不存在' });
+            }
             
-            // 删除节点
-            db.run('DELETE FROM vps_nodes WHERE id = ?', [nodeId], function(nodeErr) {
-                if (nodeErr) {
-                    db.run('ROLLBACK');
-                    return res.status(500).json({ error: '删除节点失败' });
-                }
-                
-                if (this.changes === 0) {
-                    db.run('ROLLBACK');
-                    return res.status(404).json({ error: '节点不存在' });
-                }
-                
-                db.run('COMMIT');
-                
-                res.json({
-                    success: true,
-                    message: '节点删除成功',
-                    deletedTests: deletedTests
-                });
+            console.log(`✅ 节点 ${nodeId} 删除成功`);
+            
+            res.json({
+                success: true,
+                message: '节点删除成功',
+                deletedTests: deletedTests
             });
         });
     });
 });
 
-// 生成一键安装脚本
+// 生成一键安装脚本 - 新版本
 router.get('/nodes/:nodeId/install-script', authenticateToken, (req, res) => {
     const { nodeId } = req.params;
     
-    // 获取节点信息和API配置
-    Promise.all([
-        new Promise((resolve, reject) => {
-            db.get('SELECT * FROM vps_nodes WHERE id = ?', [nodeId], (err, node) => {
-                if (err) reject(err);
-                else resolve(node);
-            });
-        }),
-        new Promise((resolve, reject) => {
-            db.get('SELECT config_value FROM system_config WHERE config_key = ?', ['api_key'], (err, row) => {
-                if (err) reject(err);
-                else resolve(row?.config_value);
-            });
-        })
-    ]).then(([node, apiKey]) => {
-        if (!node) {
+    console.log(`📜 生成安装脚本: 节点ID ${nodeId}`);
+    
+    db.get('SELECT * FROM vps_nodes WHERE id = ?', [nodeId], (nodeErr, node) => {
+        if (nodeErr || !node) {
             return res.status(404).json({ error: '节点不存在' });
         }
 
-        const serverUrl = req.headers.origin || `http://${req.headers.host}`;
-        
-        const script = `#!/bin/bash
-# VPS网络监测客户端一键安装脚本
-# 节点: ${node.name}
-# 位置: ${node.location}
+        if (!node.is_placeholder) {
+            return res.status(400).json({ error: '只有空白节点才能生成安装脚本' });
+        }
 
-set -e
-
-echo "🚀 开始安装VPS网络监测客户端..."
-echo "节点名称: ${node.name}"
-echo "节点位置: ${node.location}"
-
-# 检查Python3
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python3未安装，正在安装..."
-    if command -v apt &> /dev/null; then
-        apt update && apt install -y python3 python3-pip
-    elif command -v yum &> /dev/null; then
-        yum install -y python3 python3-pip
-    else
-        echo "❌ 无法自动安装Python3，请手动安装"
-        exit 1
-    fi
-fi
-
-# 检查pip3
-if ! command -v pip3 &> /dev/null; then
-    echo "正在安装pip3..."
-    python3 -m ensurepip --upgrade
-fi
-
-# 安装依赖
-echo "📦 安装Python依赖..."
-pip3 install aiohttp
-
-# 创建工作目录
-mkdir -p /opt/vps-monitor
-cd /opt/vps-monitor
-
-# 下载客户端程序
-echo "⬇️ 创建客户端程序..."
-cat > vps_client.py << 'EOF'
-${generateClientCode()}
-EOF
-
-# 创建配置文件
-echo "⚙️ 创建配置文件..."
-cat > config.json << 'EOF'
-{
-  "node_info": {
-    "name": "${node.name}",
-    "location": "${node.location}",
-    "provider": "${node.provider}",
-    "ip_address": "auto"
-  },
-  "api_endpoint": "${serverUrl}",
-  "api_key": "${apiKey}",
-  "test_interval": 300,
-  "test_targets": {
-    "china_telecom": [
-      {"ip": "202.96.209.133", "port": 80, "name": "上海电信"},
-      {"ip": "61.139.2.69", "port": 80, "name": "北京电信"}
-    ],
-    "china_unicom": [
-      {"ip": "221.5.88.88", "port": 80, "name": "北京联通"},
-      {"ip": "123.125.114.144", "port": 80, "name": "上海联通"}
-    ],
-    "china_mobile": [
-      {"ip": "221.179.155.161", "port": 80, "name": "北京移动"},
-      {"ip": "117.131.9.2", "port": 80, "name": "上海移动"}
-    ]
-  }
-}
-EOF
-
-# 创建systemd服务
-echo "🔧 创建系统服务..."
-cat > /etc/systemd/system/vps-monitor.service << 'EOF'
-[Unit]
-Description=VPS Network Monitor Client - ${node.name}
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/vps-monitor
-ExecStart=/usr/bin/python3 vps_client.py --daemon
-Restart=always
-RestartSec=30
-Environment=PYTHONPATH=/opt/vps-monitor
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 设置权限
-chmod +x vps_client.py
-
-# 启用并启动服务
-systemctl daemon-reload
-systemctl enable vps-monitor
-systemctl start vps-monitor
-
-echo "✅ 安装完成！"
-echo "📊 服务状态: systemctl status vps-monitor"
-echo "📋 查看日志: journalctl -u vps-monitor -f"
-echo "🔧 配置文件: /opt/vps-monitor/config.json"
-echo ""
-echo "🌐 请访问 ${serverUrl} 查看监控面板"
-`;
-
-        res.json({
-            success: true,
-            script: script,
-            nodeInfo: {
-                name: node.name,
-                location: node.location,
-                provider: node.provider
+        db.get('SELECT config_value FROM system_config WHERE config_key = ?', ['api_key'], (keyErr, row) => {
+            if (keyErr || !row?.config_value) {
+                return res.status(500).json({ error: 'API密钥未配置' });
             }
+            
+            const apiKey = row.config_value;
+            
+            // 生成安装令牌
+            const crypto = require('crypto');
+            const installToken = crypto
+                .createHash('md5')
+                .update(`${nodeId}-${node.name}-${apiKey}`)
+                .digest('hex')
+                .substring(0, 16);
+
+            const serverUrl = req.headers.origin || `http://${req.headers.host}`;
+            const installUrl = `${serverUrl}/api/install/${nodeId}/${installToken}`;
+            const curlCommand = `curl -fsSL ${installUrl} | bash`;
+            const wgetCommand = `wget -qO- ${installUrl} | bash`;
+            
+            console.log(`✅ 为节点 ${node.name} 生成安装URL`);
+            
+            res.json({
+                success: true,
+                script: `一键安装命令已生成，请在目标VPS上执行：\n\n${curlCommand}\n\n或使用wget：\n${wgetCommand}`,
+                installUrl: installUrl,
+                curlCommand: curlCommand,
+                wgetCommand: wgetCommand,
+                nodeInfo: {
+                    name: node.name,
+                    installToken: installToken
+                }
+            });
         });
-    }).catch(err => {
-        console.error('生成安装脚本失败:', err);
-        res.status(500).json({ error: '生成脚本失败' });
+    });
+});
+// 简单测试端点
+router.get('/test', (req, res) => {
+    console.log('🧪 管理员路由测试端点被访问');
+    res.json({ 
+        success: true, 
+        message: '管理员路由工作正常',
+        timestamp: new Date().toISOString()
     });
 });
 
+console.log('✅ Admin routes module exports completed');
 module.exports = router;
