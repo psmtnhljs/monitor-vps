@@ -1,15 +1,100 @@
 const express = require('express');
 const { db } = require('../config/database');
 const { authenticateAPIKey } = require('../middleware/auth');
+const fetch = require('node-fetch');
 
 const router = express.Router();
 
-// 注册VPS节点
-router.post('/nodes/register', authenticateAPIKey, (req, res) => {
+// 地理位置检测函数
+async function getLocationInfo(ip) {
+    const locationServices = [
+        {
+            url: `http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,as,query`,
+            parser: parseIpApiResponse
+        },
+        {
+            url: `https://ipinfo.io/${ip}/json`,
+            parser: parseIpInfoResponse
+        }
+    ];
+    
+    for (const service of locationServices) {
+        try {
+            const response = await fetch(service.url, { timeout: 10000 });
+            if (response.ok) {
+                const data = await response.json();
+                const locationInfo = service.parser(data);
+                
+                if (locationInfo && locationInfo.country) {
+                    console.log(`✅ 地理位置检测成功 (${service.url}):`, locationInfo);
+                    return locationInfo;
+                }
+            }
+        } catch (error) {
+            console.log(`⚠️ 地理位置服务失败 ${service.url}:`, error.message);
+        }
+    }
+    
+    console.log('❌ 所有地理位置服务都失败，使用默认值');
+    return {
+        country: 'Unknown',
+        country_code: 'XX',
+        city: 'Unknown',
+        region: 'Unknown',
+        isp: 'Unknown ISP',
+        location_string: 'Unknown Location'
+    };
+}
+
+function parseIpApiResponse(data) {
+    try {
+        if (data.status === 'success') {
+            return {
+                country: data.country || 'Unknown',
+                country_code: data.countryCode || 'XX',
+                city: data.city || 'Unknown',
+                region: data.regionName || 'Unknown',
+                isp: data.isp || 'Unknown ISP',
+                org: data.org || '',
+                location_string: `${data.city || 'Unknown'}, ${data.country || 'Unknown'}`
+            };
+        }
+    } catch (error) {
+        console.log('解析ip-api响应失败:', error.message);
+    }
+    return null;
+}
+
+function parseIpInfoResponse(data) {
+    try {
+        if (data.country) {
+            const city = data.city || 'Unknown';
+            const country = data.country || 'Unknown';
+            const region = data.region || 'Unknown';
+            const org = data.org || 'Unknown ISP';
+            
+            return {
+                country: country,
+                country_code: data.country || 'XX',
+                city: city,
+                region: region,
+                isp: org,
+                org: org,
+                location_string: `${city}, ${country}`
+            };
+        }
+    } catch (error) {
+        console.log('解析ipinfo响应失败:', error.message);
+    }
+    return null;
+}
+
+// 注册VPS节点 - 增强版本
+router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
     const { name, location, provider, ip_address } = req.body;
     
-    if (!name || !location || !provider || !ip_address) {
-        return res.status(400).json({ error: '缺少必要参数' });
+    if (!name || !ip_address) {
+        return res.status(400).json({ error: '节点名称和IP地址不能为空' });
     }
 
     // 获取客户端真实IP
@@ -20,87 +105,180 @@ router.post('/nodes/register', authenticateAPIKey, (req, res) => {
                      ip_address;
 
     const cleanIP = clientIP.replace(/^::ffff:/, '');
+    
+    console.log(`📍 节点注册请求: ${name} (客户端IP: ${cleanIP})`);
+    console.log(`原始位置信息: location=${location}, provider=${provider}`);
 
     // 检查是否为占位符节点
     db.get(
-        'SELECT id, is_placeholder FROM vps_nodes WHERE name = ?',
+        'SELECT id, is_placeholder, location, provider FROM vps_nodes WHERE name = ?',
         [name],
-        (err, existingNode) => {
+        async (err, existingNode) => {
             if (err) {
                 console.error('检查节点失败:', err);
                 return res.status(500).json({ error: '注册失败' });
             }
 
+            let finalLocation = location;
+            let finalProvider = provider;
+            let locationInfo = null;
+            
+            // 如果位置或提供商需要自动检测
+            if ((location === 'Auto-detect' || !location || provider === 'Auto-detect' || !provider)) {
+                console.log('🔍 开始自动检测地理位置和ISP信息...');
+                locationInfo = await getLocationInfo(cleanIP);
+                
+                if (location === 'Auto-detect' || !location) {
+                    finalLocation = locationInfo.location_string;
+                    console.log(`📍 自动检测到位置: ${finalLocation}`);
+                }
+                
+                if (provider === 'Auto-detect' || !provider) {
+                    finalProvider = locationInfo.isp;
+                    console.log(`🏢 自动检测到ISP: ${finalProvider}`);
+                }
+            }
+
             if (existingNode && existingNode.is_placeholder) {
                 // 更新占位符节点为真实节点
+                console.log(`🔄 激活空白节点: ${name} (ID: ${existingNode.id})`);
+                
                 const updateStmt = db.prepare(`
                     UPDATE vps_nodes 
-                    SET ip_address = ?, last_seen = CURRENT_TIMESTAMP, status = 1, is_placeholder = 0
+                    SET location = ?, provider = ?, ip_address = ?, 
+                        last_seen = CURRENT_TIMESTAMP, status = 1, is_placeholder = 0,
+                        country_code = ?, country_name = ?, city = ?, region = ?, isp = ?
                     WHERE id = ?
                 `);
 
-                updateStmt.run([cleanIP, existingNode.id], function(err) {
+                updateStmt.run([
+                    finalLocation, 
+                    finalProvider, 
+                    cleanIP,
+                    locationInfo?.country_code || null,
+                    locationInfo?.country || null,
+                    locationInfo?.city || null,
+                    locationInfo?.region || null,
+                    locationInfo?.isp || null,
+                    existingNode.id
+                ], function(err) {
                     if (err) {
                         console.error('更新占位符节点失败:', err);
                         return res.status(500).json({ error: '更新失败' });
                     }
                     
-                    console.log(`占位符节点激活成功: ${name} (${cleanIP})`);
+                    console.log(`✅ 空白节点激活成功: ${name} (${cleanIP})`);
+                    console.log(`   位置: ${finalLocation}`);
+                    console.log(`   提供商: ${finalProvider}`);
                     
                     res.json({
                         success: true,
                         node_id: existingNode.id,
                         message: '节点激活成功',
                         updated: true,
-                        detected_ip: cleanIP
+                        detected_ip: cleanIP,
+                        location_info: {
+                            location: finalLocation,
+                            provider: finalProvider,
+                            country_code: locationInfo?.country_code,
+                            country: locationInfo?.country,
+                            city: locationInfo?.city,
+                            isp: locationInfo?.isp
+                        }
                     });
                 });
                 
                 updateStmt.finalize();
             } else if (existingNode) {
                 // 更新现有真实节点
+                console.log(`🔄 更新现有节点: ${name} (ID: ${existingNode.id})`);
+                
                 const updateStmt = db.prepare(`
                     UPDATE vps_nodes 
-                    SET location = ?, provider = ?, ip_address = ?, last_seen = CURRENT_TIMESTAMP, status = 1
+                    SET location = ?, provider = ?, ip_address = ?, 
+                        last_seen = CURRENT_TIMESTAMP, status = 1,
+                        country_code = ?, country_name = ?, city = ?, region = ?, isp = ?
                     WHERE id = ?
                 `);
 
-                updateStmt.run([location, provider, cleanIP, existingNode.id], function(err) {
+                updateStmt.run([
+                    finalLocation, 
+                    finalProvider, 
+                    cleanIP,
+                    locationInfo?.country_code || null,
+                    locationInfo?.country || null,
+                    locationInfo?.city || null,
+                    locationInfo?.region || null,
+                    locationInfo?.isp || null,
+                    existingNode.id
+                ], function(err) {
                     if (err) {
                         console.error('更新节点失败:', err);
                         return res.status(500).json({ error: '更新失败' });
                     }
+                    
+                    console.log(`✅ 节点信息更新成功: ${name} (${cleanIP})`);
                     
                     res.json({
                         success: true,
                         node_id: existingNode.id,
                         message: '节点信息已更新',
                         updated: true,
-                        detected_ip: cleanIP
+                        detected_ip: cleanIP,
+                        location_info: {
+                            location: finalLocation,
+                            provider: finalProvider,
+                            country_code: locationInfo?.country_code,
+                            country: locationInfo?.country,
+                            city: locationInfo?.city,
+                            isp: locationInfo?.isp
+                        }
                     });
                 });
                 
                 updateStmt.finalize();
             } else {
                 // 创建新节点
+                console.log(`🆕 创建新节点: ${name}`);
+                
                 const stmt = db.prepare(`
-                    INSERT INTO vps_nodes (name, location, provider, ip_address, last_seen, status, is_placeholder)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 0)
+                    INSERT INTO vps_nodes 
+                    (name, location, provider, ip_address, last_seen, status, is_placeholder,
+                     country_code, country_name, city, region, isp)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1, 0, ?, ?, ?, ?, ?)
                 `);
 
-                stmt.run([name, location, provider, cleanIP], function(err) {
+                stmt.run([
+                    name, 
+                    finalLocation, 
+                    finalProvider, 
+                    cleanIP,
+                    locationInfo?.country_code || null,
+                    locationInfo?.country || null,
+                    locationInfo?.city || null,
+                    locationInfo?.region || null,
+                    locationInfo?.isp || null
+                ], function(err) {
                     if (err) {
                         console.error('节点注册失败:', err);
                         return res.status(500).json({ error: '注册失败' });
                     }
                     
-                    console.log(`新节点注册成功: ${name} (${cleanIP})`);
+                    console.log(`✅ 新节点注册成功: ${name} (${cleanIP})`);
                     
                     res.json({
                         success: true,
                         node_id: this.lastID,
                         message: '节点注册成功',
-                        detected_ip: cleanIP
+                        detected_ip: cleanIP,
+                        location_info: {
+                            location: finalLocation,
+                            provider: finalProvider,
+                            country_code: locationInfo?.country_code,
+                            country: locationInfo?.country,
+                            city: locationInfo?.city,
+                            isp: locationInfo?.isp
+                        }
                     });
                 });
                 
@@ -171,7 +349,7 @@ router.get('/nodes', (req, res) => {
         db.all(`
             SELECT 
                 id, name, location, provider, ${ipField}, status,
-                last_seen,
+                last_seen, country_code, country_name, city, region, isp,
                 datetime(last_seen, 'localtime') as last_seen_local,
                 CASE 
                     WHEN is_placeholder = 1 THEN 'placeholder'
@@ -636,7 +814,6 @@ log_info "常用命令:"
 echo "  启动服务: systemctl start vps-monitor"
 echo "  停止服务: systemctl stop vps-monitor"
 echo "  重启服务: systemctl restart vps-monitor"
-echo "  查看状态: systemctl status vps-monitor"
 echo "  查看日志: journalctl -u vps-monitor -f"
 echo
 log_success "节点 '${node.name}' 已成功连接到监控系统！"

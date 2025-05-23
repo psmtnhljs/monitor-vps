@@ -42,6 +42,7 @@
                 <div class="user-info">
                     <span id="welcomeText">欢迎，管理员</span>
                     <a href="/" class="btn btn-secondary" target="_blank">前台</a>
+                    <button class="btn btn-warning" onclick="showChangePasswordModal()">修改密码</button>
                     <button class="btn btn-danger" onclick="logout()">退出</button>
                 </div>
             </div>
@@ -189,6 +190,48 @@
                 </div>
                 
                 <button class="btn btn-primary copy-btn" onclick="copyScript()">📋 复制脚本</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码模态框 -->
+    <div id="changePasswordModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🔒 修改管理员密码</h3>
+                <span class="close" onclick="closeModal('changePasswordModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="passwordAlert"></div>
+                
+                <form id="changePasswordForm">
+                    <div class="form-group">
+                        <label for="currentPassword">当前密码</label>
+                        <input type="password" id="currentPassword" class="form-control" required placeholder="请输入当前密码">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="newPassword">新密码</label>
+                        <input type="password" id="newPassword" class="form-control" required placeholder="请输入新密码（至少6位）" minlength="6">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="confirmPassword">确认新密码</label>
+                        <input type="password" id="confirmPassword" class="form-control" required placeholder="请再次输入新密码">
+                    </div>
+                    
+                    <div class="alert alert-warning">
+                        <strong>⚠️ 重要提醒：</strong><br>
+                        • 密码长度至少6位<br>
+                        • 修改密码后需要重新登录<br>
+                        • 请务必记住新密码，避免无法访问系统
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('changePasswordModal')">取消</button>
+                        <button type="submit" class="btn btn-warning">修改密码</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

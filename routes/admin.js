@@ -69,13 +69,6 @@ router.post('/regenerate-api-key', authenticateToken, (req, res) => {
     });
 });
 
-// 在 routes/admin.js 文件中，找到获取所有节点的部分（大约第90-130行）
-// 将现有的查询替换为以下代码：
-
-// 获取所有节点（管理员）- 修复版本
-// 在 routes/admin.js 文件中，找到 router.get('/nodes', authenticateToken, (req, res) => { 部分
-// 将整个函数替换为以下代码：
-
 // 获取所有节点（管理员）- 简化修复版本
 router.get('/nodes', authenticateToken, (req, res) => {
     console.log('🌐 管理员请求节点列表...');

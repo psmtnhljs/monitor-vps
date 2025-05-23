@@ -100,6 +100,79 @@ function showAlert(containerId, message, type) {
     }, 5000);
 }
 
+// 显示修改密码模态框
+function showChangePasswordModal() {
+    document.getElementById('changePasswordModal').style.display = 'block';
+    document.getElementById('changePasswordForm').reset();
+    document.getElementById('passwordAlert').innerHTML = '';
+    updateDebugInfo('显示修改密码对话框');
+}
+
+// 修改密码处理
+document.getElementById('changePasswordForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    
+    // 验证新密码
+    if (newPassword.length < 6) {
+        showAlert('passwordAlert', '新密码长度至少6位', 'danger');
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        showAlert('passwordAlert', '两次输入的新密码不一致', 'danger');
+        return;
+    }
+    
+    if (currentPassword === newPassword) {
+        showAlert('passwordAlert', '新密码不能与当前密码相同', 'danger');
+        return;
+    }
+    
+    console.log('🔐 开始修改密码...');
+    updateDebugInfo('开始修改密码');
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/change-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+                currentPassword: currentPassword,
+                newPassword: newPassword
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('✅ 密码修改成功');
+            updateDebugInfo('密码修改成功');
+            
+            showAlert('passwordAlert', '密码修改成功！即将重新登录...', 'success');
+            
+            setTimeout(() => {
+                closeModal('changePasswordModal');
+                logout();
+                alert('密码修改成功，请使用新密码重新登录！');
+            }, 2000);
+        } else {
+            console.error('❌ 密码修改失败:', data.error);
+            updateDebugInfo(`密码修改失败: ${data.error}`);
+            showAlert('passwordAlert', data.error || '密码修改失败', 'danger');
+        }
+    } catch (error) {
+        console.error('❌ 密码修改网络错误:', error);
+        updateDebugInfo(`密码修改网络错误: ${error.message}`);
+        showAlert('passwordAlert', '网络错误，请重试', 'danger');
+    }
+});
+
 // 加载系统配置
 async function loadConfig() {
     try {

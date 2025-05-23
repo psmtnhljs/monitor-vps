@@ -9,8 +9,8 @@ function generateAPIKey() {
 function generateClientCode() {
     return `#!/usr/bin/env python3
 """
-VPS网络测试客户端 - 自动生成版本
-部署在各个VPS节点上，定期执行网络测试并将结果发送到API服务器
+VPS网络测试客户端 - 增强版本
+支持自动地理位置检测和ISP信息获取
 """
 
 import asyncio
@@ -43,6 +43,7 @@ class NetworkTester:
         self.config = self.load_config(config_file)
         self.node_id = None
         self.session = None
+        self.location_info = None
         
     def load_config(self, config_file: str) -> Dict:
         """加载配置文件"""
@@ -104,6 +105,109 @@ class NetworkTester:
             logging.error(f"获取IP地址失败: {e}")
             return "127.0.0.1"
 
+    async def get_location_info(self, ip_address: str) -> Dict:
+        """获取IP地址的地理位置和ISP信息"""
+        if self.location_info:
+            return self.location_info
+            
+        location_services = [
+            {
+                'url': f'http://ip-api.com/json/{ip_address}?fields=status,message,country,countryCode,region,regionName,city,lat,lon,timezone,isp,org,as,query',
+                'parser': self._parse_ipapi_response
+            },
+            {
+                'url': f'https://ipinfo.io/{ip_address}/json',
+                'parser': self._parse_ipinfo_response
+            },
+            {
+                'url': f'https://freegeoip.app/json/{ip_address}',
+                'parser': self._parse_freegeoip_response
+            }
+        ]
+        
+        for service in location_services:
+            try:
+                async with self.session.get(service['url'], timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        location_info = service['parser'](data)
+                        
+                        if location_info and location_info.get('country'):
+                            self.location_info = location_info
+                            logging.info(f"地理位置检测成功: {location_info}")
+                            return location_info
+                            
+            except Exception as e:
+                logging.debug(f"地理位置服务 {service['url']} 失败: {e}")
+                continue
+        
+        # 如果所有服务都失败，返回默认信息
+        logging.warning("无法获取地理位置信息，使用默认值")
+        return {
+            'country': 'Unknown',
+            'country_code': 'XX',
+            'city': 'Unknown',
+            'region': 'Unknown',
+            'isp': 'Unknown ISP',
+            'location_string': 'Unknown Location'
+        }
+
+    def _parse_ipapi_response(self, data: Dict) -> Optional[Dict]:
+        """解析ip-api.com的响应"""
+        try:
+            if data.get('status') == 'success':
+                return {
+                    'country': data.get('country', 'Unknown'),
+                    'country_code': data.get('countryCode', 'XX'),
+                    'city': data.get('city', 'Unknown'),
+                    'region': data.get('regionName', 'Unknown'),
+                    'isp': data.get('isp', 'Unknown ISP'),
+                    'org': data.get('org', ''),
+                    'location_string': f"{data.get('city', 'Unknown')}, {data.get('country', 'Unknown')}"
+                }
+        except Exception as e:
+            logging.debug(f"解析ip-api响应失败: {e}")
+        return None
+
+    def _parse_ipinfo_response(self, data: Dict) -> Optional[Dict]:
+        """解析ipinfo.io的响应"""
+        try:
+            if 'country' in data:
+                city = data.get('city', 'Unknown')
+                country = data.get('country', 'Unknown')
+                region = data.get('region', 'Unknown')
+                org = data.get('org', 'Unknown ISP')
+                
+                return {
+                    'country': country,
+                    'country_code': data.get('country', 'XX'),
+                    'city': city,
+                    'region': region,
+                    'isp': org,
+                    'org': org,
+                    'location_string': f"{city}, {country}"
+                }
+        except Exception as e:
+            logging.debug(f"解析ipinfo响应失败: {e}")
+        return None
+
+    def _parse_freegeoip_response(self, data: Dict) -> Optional[Dict]:
+        """解析freegeoip.app的响应"""
+        try:
+            if 'country_name' in data:
+                return {
+                    'country': data.get('country_name', 'Unknown'),
+                    'country_code': data.get('country_code', 'XX'),
+                    'city': data.get('city', 'Unknown'),
+                    'region': data.get('region_name', 'Unknown'),
+                    'isp': 'Unknown ISP',  # freegeoip不提供ISP信息
+                    'org': '',
+                    'location_string': f"{data.get('city', 'Unknown')}, {data.get('country_name', 'Unknown')}"
+                }
+        except Exception as e:
+            logging.debug(f"解析freegeoip响应失败: {e}")
+        return None
+
     async def register_node(self) -> bool:
         """注册VPS节点"""
         node_info = self.config['node_info'].copy()
@@ -112,7 +216,24 @@ class NetworkTester:
         if node_info.get('ip_address') == 'auto':
             node_info['ip_address'] = self.get_local_ip()
         
+        # 如果配置中的位置或提供商是Auto-detect，则自动检测
+        if (node_info.get('location') == 'Auto-detect' or 
+            node_info.get('provider') == 'Auto-detect' or
+            not node_info.get('location') or 
+            not node_info.get('provider')):
+            
+            logging.info("正在自动检测地理位置和ISP信息...")
+            location_info = await self.get_location_info(node_info['ip_address'])
+            
+            if node_info.get('location') == 'Auto-detect' or not node_info.get('location'):
+                node_info['location'] = location_info['location_string']
+                
+            if node_info.get('provider') == 'Auto-detect' or not node_info.get('provider'):
+                node_info['provider'] = location_info['isp']
+        
         logging.info(f"正在注册节点: {node_info['name']} ({node_info['ip_address']})")
+        logging.info(f"位置: {node_info['location']}")
+        logging.info(f"提供商: {node_info['provider']}")
         
         try:
             async with self.session.post(
@@ -482,6 +603,7 @@ def main():
 if __name__ == "__main__":
     main()`;
 }
+
 module.exports = {
     generateAPIKey,
     generateClientCode
