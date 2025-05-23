@@ -374,9 +374,12 @@ router.get('/install/:nodeId/:token', (req, res) => {
         
         console.log(`✅ 为节点 ${node.name} 生成公开安装脚本`);
         
+        // 处理文件名，确保只包含ASCII安全字符
+        const safeFileName = node.name.replace(/[^a-zA-Z0-9\-_]/g, '_');
+        
         // 设置正确的Content-Type
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="vps-monitor-${node.name}.sh"`);
+        res.setHeader('Content-Disposition', `attachment; filename="vps-monitor-${safeFileName}.sh"`);
         
         const { generateClientCode } = require('../utils/helpers');
         
@@ -478,11 +481,54 @@ fi
 
 # 安装Python依赖
 log_info "📦 安装Python依赖包..."
-pip3 install aiohttp requests --quiet || {
-    log_error "Python依赖安装失败"
-    exit 1
-}
-log_success "Python依赖安装完成"
+
+# 优先尝试系统包管理器安装
+DEPS_INSTALLED=0
+
+case \$OS in
+    ubuntu|debian)
+        log_info "尝试通过apt安装Python依赖..."
+        if apt install -y python3-aiohttp python3-requests 2>/dev/null; then
+            log_success "通过系统包管理器安装依赖完成"
+            DEPS_INSTALLED=1
+        fi
+        ;;
+    centos|rhel|fedora)
+        log_info "尝试通过包管理器安装Python依赖..."
+        if command -v dnf &> /dev/null; then
+            dnf install -y python3-aiohttp python3-requests 2>/dev/null && DEPS_INSTALLED=1
+        else
+            yum install -y python3-aiohttp python3-requests 2>/dev/null && DEPS_INSTALLED=1
+        fi
+        ;;
+    alpine)
+        log_info "尝试通过apk安装Python依赖..."
+        apk add --no-cache py3-aiohttp py3-requests 2>/dev/null && DEPS_INSTALLED=1
+        ;;
+esac
+
+# 如果系统包管理器安装失败，使用pip
+if [ \$DEPS_INSTALLED -eq 0 ]; then
+    log_info "系统包管理器安装失败，尝试使用pip..."
+    
+    # 尝试多种pip安装方法
+    if pip3 install aiohttp requests --quiet 2>/dev/null; then
+        log_success "pip安装依赖完成"
+    elif pip3 install aiohttp requests --break-system-packages --quiet 2>/dev/null; then
+        log_success "pip安装依赖完成（使用--break-system-packages）"
+        log_warning "已使用--break-system-packages参数，这可能影响系统Python环境"
+    elif python3 -m pip install aiohttp requests --break-system-packages --quiet 2>/dev/null; then
+        log_success "pip安装依赖完成（使用python3 -m pip）"
+    else
+        log_error "Python依赖安装失败"
+        log_info "请手动安装依赖后重新运行："
+        log_info "  Debian/Ubuntu: apt install python3-aiohttp python3-requests"
+        log_info "  或使用: pip3 install aiohttp requests --break-system-packages"
+        exit 1
+    fi
+else
+    log_success "Python依赖安装完成"
+fi
 
 # 创建工作目录
 WORK_DIR="/opt/vps-monitor"

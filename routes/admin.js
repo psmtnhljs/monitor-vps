@@ -69,17 +69,33 @@ router.post('/regenerate-api-key', authenticateToken, (req, res) => {
     });
 });
 
-// 获取所有节点（管理员）- 最简版本
+// 在 routes/admin.js 文件中，找到获取所有节点的部分（大约第90-130行）
+// 将现有的查询替换为以下代码：
+
+// 获取所有节点（管理员）- 修复版本
+// 在 routes/admin.js 文件中，找到 router.get('/nodes', authenticateToken, (req, res) => { 部分
+// 将整个函数替换为以下代码：
+
+// 获取所有节点（管理员）- 简化修复版本
 router.get('/nodes', authenticateToken, (req, res) => {
     console.log('🌐 管理员请求节点列表...');
     
-    // 使用最简单的查询，避免复杂的SQL
+    // 使用与前台完全相同的查询逻辑
     db.all(`
         SELECT 
-            id, name, location, provider, ip_address, status, is_placeholder,
-            last_seen
+            id, name, location, provider, ip_address, status,
+            last_seen, is_placeholder,
+            datetime(last_seen, 'localtime') as last_seen_local,
+            CASE 
+                WHEN is_placeholder = 1 THEN 'placeholder'
+                WHEN datetime(last_seen) > datetime('now', '-6 minutes') THEN 'online'
+                WHEN datetime(last_seen) > datetime('now', '-15 minutes') THEN 'warning'
+                ELSE 'offline'
+            END as connection_status,
+            ROUND((julianday('now') - julianday(last_seen)) * 24 * 60, 1) as minutes_since_last_seen,
+            (SELECT COUNT(*) FROM test_results WHERE node_id = vps_nodes.id) as total_tests
         FROM vps_nodes 
-        ORDER BY is_placeholder DESC, id DESC
+        ORDER BY is_placeholder DESC, connection_status ASC, id DESC
     `, (err, rows) => {
         if (err) {
             console.error('❌ 获取节点列表失败:', err);
@@ -91,63 +107,79 @@ router.get('/nodes', authenticateToken, (req, res) => {
         
         console.log(`✅ 查询成功，返回 ${rows.length} 个节点`);
         
-        // 手动处理数据，添加缺失的字段
+        // 直接处理数据，确保与前台显示一致
         const processedRows = rows.map(row => {
-            // 计算连接状态
-            let connection_status = 'offline';
-            if (row.is_placeholder) {
-                connection_status = 'placeholder';
-            } else if (row.last_seen) {
-                const lastSeenTime = new Date(row.last_seen);
-                const now = new Date();
-                const diffMinutes = (now - lastSeenTime) / (1000 * 60);
-                
-                if (diffMinutes <= 6) {
-                    connection_status = 'online';
-                } else if (diffMinutes <= 15) {
-                    connection_status = 'warning';
-                } else {
-                    connection_status = 'offline';
-                }
+            // 处理位置显示
+            let locationDisplay = row.location || 'Auto-detect';
+            let providerDisplay = row.provider || 'Auto-detect';
+            
+            // 如果位置或提供商是 'Auto-detect'，显示为待检测
+            if (locationDisplay === 'Auto-detect') {
+                locationDisplay = '待检测';
+            }
+            if (providerDisplay === 'Auto-detect') {
+                providerDisplay = '待检测';
             }
             
             return {
                 id: row.id,
                 name: row.name,
-                location: row.location || 'Auto-detect',
-                provider: row.provider || 'Auto-detect',
+                location: locationDisplay,
+                provider: providerDisplay,
                 ip_address: row.ip_address || null,
                 status: row.status || 0,
                 is_placeholder: row.is_placeholder || 0,
                 last_seen: row.last_seen || new Date().toISOString(),
-                connection_status: connection_status,
-                country_code: null,
-                country_name: null,
-                city: null,
-                isp: null,
-                total_tests: 0,
-                minutes_since_last_seen: row.last_seen ? 
-                    Math.round((new Date() - new Date(row.last_seen)) / (1000 * 60)) : null
+                connection_status: row.connection_status,
+                // 添加前台需要的字段
+                country_code: null, // 可以后续添加地理位置API
+                country_name: locationDisplay.includes(',') ? locationDisplay.split(',')[1]?.trim() : null,
+                city: locationDisplay.includes(',') ? locationDisplay.split(',')[0]?.trim() : null,
+                isp: providerDisplay !== '待检测' ? providerDisplay : null,
+                total_tests: row.total_tests || 0,
+                minutes_since_last_seen: row.minutes_since_last_seen
             };
         });
         
-        // 分类统计
+        // 分类统计并输出详细信息
         const placeholderNodes = processedRows.filter(r => r.is_placeholder);
         const realNodes = processedRows.filter(r => !r.is_placeholder);
         
-        console.log(`📊 空白节点: ${placeholderNodes.length} 个`);
-        console.log(`📊 真实节点: ${realNodes.length} 个`);
+        console.log(`📊 节点状态统计:`);
+        console.log(`   - 空白节点: ${placeholderNodes.length} 个`);
+        console.log(`   - 真实节点: ${realNodes.length} 个`);
         
-        if (placeholderNodes.length > 0) {
-            console.log('🔍 空白节点列表:');
-            placeholderNodes.forEach(node => {
-                console.log(`  ID: ${node.id}, 名称: ${node.name}`);
-            });
-        }
+        // 输出每个节点的详细状态
+        processedRows.forEach(node => {
+            const nodeType = node.is_placeholder ? '[空白]' : '[真实]';
+            const statusIcon = {
+                'online': '🟢',
+                'warning': '🟡', 
+                'offline': '🔴',
+                'placeholder': '⚪'
+            }[node.connection_status] || '❓';
+            
+            console.log(`   ${statusIcon} ${nodeType} ID:${node.id} "${node.name}" - ${node.connection_status} (IP: ${node.ip_address || 'N/A'})`);
+        });
         
         res.json(processedRows);
     });
 });
+
+// 辅助函数：根据IP地址获取国家代码（简化版本）
+function getCountryCodeFromIP(ip) {
+    // 这里可以集成真实的IP地理位置API
+    // 暂时返回null，后续可以扩展
+    if (ip && ip.startsWith('172.')) return 'SG'; // 示例：如果是内网IP，假设为新加坡
+    return null;
+}
+
+// 辅助函数：根据IP地址获取国家名称（简化版本）
+function getCountryNameFromIP(ip) {
+    // 这里可以集成真实的IP地理位置API
+    if (ip && ip.startsWith('172.')) return 'Singapore'; // 示例
+    return null;
+}
 
 // 创建空白节点
 router.post('/nodes', authenticateToken, (req, res) => {

@@ -482,7 +482,6 @@ def main():
 if __name__ == "__main__":
     main()`;
 }
-
 module.exports = {
     generateAPIKey,
     generateClientCode
