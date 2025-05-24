@@ -8,6 +8,7 @@ const { cleanOldData, statusCheckTask } = require('./utils/tasks');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const nodesRoutes = require('./routes/nodes');
+const oneclickRoutes = require('./routes/oneclick');
 const statsRoutes = require('./routes/stats');
 
 const app = express();
@@ -25,6 +26,7 @@ initDatabase();
 app.use('/api/admin', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', nodesRoutes);
+app.use('/api', oneclickRoutes);  // 新增一键安装路由
 app.use('/api', statsRoutes);
 
 // 提供前端页面

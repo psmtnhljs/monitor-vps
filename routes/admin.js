@@ -69,110 +69,193 @@ router.post('/regenerate-api-key', authenticateToken, (req, res) => {
     });
 });
 
-// 获取所有节点（管理员）- 简化修复版本
+// 获取所有节点（管理员）- 修复显示问题
 router.get('/nodes', authenticateToken, (req, res) => {
     console.log('🌐 管理员请求节点列表...');
     
-    // 使用与前台完全相同的查询逻辑
-    db.all(`
-        SELECT 
-            id, name, location, provider, ip_address, status,
-            last_seen, is_placeholder,
-            datetime(last_seen, 'localtime') as last_seen_local,
-            CASE 
-                WHEN is_placeholder = 1 THEN 'placeholder'
-                WHEN datetime(last_seen) > datetime('now', '-6 minutes') THEN 'online'
-                WHEN datetime(last_seen) > datetime('now', '-15 minutes') THEN 'warning'
-                ELSE 'offline'
-            END as connection_status,
-            ROUND((julianday('now') - julianday(last_seen)) * 24 * 60, 1) as minutes_since_last_seen,
-            (SELECT COUNT(*) FROM test_results WHERE node_id = vps_nodes.id) as total_tests
-        FROM vps_nodes 
-        ORDER BY is_placeholder DESC, connection_status ASC, id DESC
-    `, (err, rows) => {
-        if (err) {
-            console.error('❌ 获取节点列表失败:', err);
+    // 先检查表结构
+    db.all("PRAGMA table_info(vps_nodes)", (pragmaErr, columns) => {
+        if (pragmaErr) {
+            console.error('❌ 检查表结构失败:', pragmaErr);
             return res.status(500).json({ 
                 error: '查询失败', 
-                details: err.message 
+                details: pragmaErr.message 
             });
         }
         
-        console.log(`✅ 查询成功，返回 ${rows.length} 个节点`);
+        const columnNames = columns.map(col => col.name);
+        const hasNewColumns = columnNames.includes('country_code');
         
-        // 直接处理数据，确保与前台显示一致
-        const processedRows = rows.map(row => {
-            // 处理位置显示
-            let locationDisplay = row.location || 'Auto-detect';
-            let providerDisplay = row.provider || 'Auto-detect';
-            
-            // 如果位置或提供商是 'Auto-detect'，显示为待检测
-            if (locationDisplay === 'Auto-detect') {
-                locationDisplay = '待检测';
+        let selectSQL;
+        if (hasNewColumns) {
+            // 新版本数据库，包含地理位置字段
+            selectSQL = `
+                SELECT 
+                    id, name, location, provider, ip_address, status,
+                    last_seen, is_placeholder, country_code, country_name, city, region, isp,
+                    datetime(last_seen, 'localtime') as last_seen_local,
+                    CASE 
+                        WHEN is_placeholder = 1 THEN 'placeholder'
+                        WHEN datetime(last_seen) > datetime('now', '-6 minutes') THEN 'online'
+                        WHEN datetime(last_seen) > datetime('now', '-15 minutes') THEN 'warning'
+                        ELSE 'offline'
+                    END as connection_status,
+                    ROUND((julianday('now') - julianday(last_seen)) * 24 * 60, 1) as minutes_since_last_seen,
+                    (SELECT COUNT(*) FROM test_results WHERE node_id = vps_nodes.id) as total_tests
+                FROM vps_nodes 
+                ORDER BY is_placeholder DESC, connection_status ASC, id DESC
+            `;
+        } else {
+            // 旧版本数据库，不包含地理位置字段
+            selectSQL = `
+                SELECT 
+                    id, name, location, provider, ip_address, status,
+                    last_seen, is_placeholder,
+                    datetime(last_seen, 'localtime') as last_seen_local,
+                    CASE 
+                        WHEN is_placeholder = 1 THEN 'placeholder'
+                        WHEN datetime(last_seen) > datetime('now', '-6 minutes') THEN 'online'
+                        WHEN datetime(last_seen) > datetime('now', '-15 minutes') THEN 'warning'
+                        ELSE 'offline'
+                    END as connection_status,
+                    ROUND((julianday('now') - julianday(last_seen)) * 24 * 60, 1) as minutes_since_last_seen,
+                    (SELECT COUNT(*) FROM test_results WHERE node_id = vps_nodes.id) as total_tests
+                FROM vps_nodes 
+                ORDER BY is_placeholder DESC, connection_status ASC, id DESC
+            `;
+        }
+        
+        db.all(selectSQL, (err, rows) => {
+            if (err) {
+                console.error('❌ 获取节点列表失败:', err);
+                return res.status(500).json({ 
+                    error: '查询失败', 
+                    details: err.message 
+                });
             }
-            if (providerDisplay === 'Auto-detect') {
-                providerDisplay = '待检测';
-            }
             
-            return {
-                id: row.id,
-                name: row.name,
-                location: locationDisplay,
-                provider: providerDisplay,
-                ip_address: row.ip_address || null,
-                status: row.status || 0,
-                is_placeholder: row.is_placeholder || 0,
-                last_seen: row.last_seen || new Date().toISOString(),
-                connection_status: row.connection_status,
-                // 添加前台需要的字段
-                country_code: null, // 可以后续添加地理位置API
-                country_name: locationDisplay.includes(',') ? locationDisplay.split(',')[1]?.trim() : null,
-                city: locationDisplay.includes(',') ? locationDisplay.split(',')[0]?.trim() : null,
-                isp: providerDisplay !== '待检测' ? providerDisplay : null,
-                total_tests: row.total_tests || 0,
-                minutes_since_last_seen: row.minutes_since_last_seen
-            };
-        });
-        
-        // 分类统计并输出详细信息
-        const placeholderNodes = processedRows.filter(r => r.is_placeholder);
-        const realNodes = processedRows.filter(r => !r.is_placeholder);
-        
-        console.log(`📊 节点状态统计:`);
-        console.log(`   - 空白节点: ${placeholderNodes.length} 个`);
-        console.log(`   - 真实节点: ${realNodes.length} 个`);
-        
-        // 输出每个节点的详细状态
-        processedRows.forEach(node => {
-            const nodeType = node.is_placeholder ? '[空白]' : '[真实]';
-            const statusIcon = {
-                'online': '🟢',
-                'warning': '🟡', 
-                'offline': '🔴',
-                'placeholder': '⚪'
-            }[node.connection_status] || '❓';
+            console.log(`✅ 查询成功，返回 ${rows.length} 个节点`);
             
-            console.log(`   ${statusIcon} ${nodeType} ID:${node.id} "${node.name}" - ${node.connection_status} (IP: ${node.ip_address || 'N/A'})`);
+            // 处理数据，修复显示问题
+            const processedRows = rows.map(row => {
+                console.log(`🔍 处理节点 ${row.name}:`, {
+                    location: row.location,
+                    provider: row.provider,
+                    country_code: row.country_code,
+                    country_name: row.country_name,
+                    city: row.city,
+                    isp: row.isp
+                });
+                
+                // 正确处理位置显示
+                let locationDisplay = '未知位置';
+                let countryCode = null;
+                let countryName = null;
+                
+                if (hasNewColumns && row.city && row.country_name) {
+                    // 优先使用新字段的数据
+                    locationDisplay = `${row.city}, ${row.country_name}`;
+                    countryCode = row.country_code;
+                    countryName = row.country_name;
+                } else if (row.location && row.location !== 'Auto-detect' && row.location !== '待检测') {
+                    // 使用原有location字段
+                    locationDisplay = row.location;
+                    // 尝试从location字段解析国家信息
+                    if (row.location.includes(',')) {
+                        const parts = row.location.split(',');
+                        if (parts.length >= 2) {
+                            countryName = parts[parts.length - 1].trim();
+                        }
+                    }
+                } else if (row.location === 'Auto-detect' || row.location === '待检测') {
+                    locationDisplay = '待检测';
+                }
+                
+                // 正确处理提供商显示
+                let providerDisplay = '未知提供商';
+                
+                if (hasNewColumns && row.isp && row.isp !== 'Unknown ISP') {
+                    // 优先使用ISP字段
+                    providerDisplay = row.isp;
+                } else if (row.provider && row.provider !== 'Auto-detect' && row.provider !== '待检测') {
+                    // 使用原有provider字段，但需要清理数据
+                    let cleanProvider = row.provider;
+                    
+                    // 检查是否包含位置信息（如 "Singapore, SingaporeAlibaba..."）
+                    if (cleanProvider.includes(',') && cleanProvider.includes('Singapore')) {
+                        // 提取真正的ISP信息（逗号后面的部分）
+                        const parts = cleanProvider.split(',');
+                        if (parts.length > 1) {
+                            // 获取最后一部分，去掉可能的重复地名
+                            let ispPart = parts[parts.length - 1].trim();
+                            // 移除可能重复的地名
+                            ispPart = ispPart.replace(/^Singapore\s*/, '');
+                            if (ispPart) {
+                                cleanProvider = ispPart;
+                            }
+                        }
+                    }
+                    
+                    providerDisplay = cleanProvider;
+                } else if (row.provider === 'Auto-detect' || row.provider === '待检测') {
+                    providerDisplay = '待检测';
+                }
+                
+                console.log(`✅ 处理结果:`, {
+                    locationDisplay,
+                    providerDisplay,
+                    countryCode,
+                    countryName
+                });
+                
+                return {
+                    id: row.id,
+                    name: row.name,
+                    location: locationDisplay,
+                    provider: providerDisplay,
+                    ip_address: row.ip_address || null,
+                    status: row.status || 0,
+                    is_placeholder: row.is_placeholder || 0,
+                    last_seen: row.last_seen || new Date().toISOString(),
+                    connection_status: row.connection_status,
+                    // 正确的地理位置字段
+                    country_code: countryCode,
+                    country_name: countryName,
+                    city: hasNewColumns ? row.city : null,
+                    region: hasNewColumns ? row.region : null,
+                    isp: hasNewColumns ? row.isp : null,
+                    // 兼容字段
+                    total_tests: row.total_tests || 0,
+                    minutes_since_last_seen: row.minutes_since_last_seen
+                };
+            });
+            
+            // 分类统计并输出详细信息
+            const placeholderNodes = processedRows.filter(r => r.is_placeholder);
+            const realNodes = processedRows.filter(r => !r.is_placeholder);
+            
+            console.log(`📊 节点状态统计:`);
+            console.log(`   - 空白节点: ${placeholderNodes.length} 个`);
+            console.log(`   - 真实节点: ${realNodes.length} 个`);
+            
+            // 输出每个节点的详细状态
+            processedRows.forEach(node => {
+                const nodeType = node.is_placeholder ? '[空白]' : '[真实]';
+                const statusIcon = {
+                    'online': '🟢',
+                    'warning': '🟡', 
+                    'offline': '🔴',
+                    'placeholder': '⚪'
+                }[node.connection_status] || '❓';
+                
+                console.log(`   ${statusIcon} ${nodeType} ID:${node.id} "${node.name}" - ${node.connection_status}`);
+                console.log(`      位置: ${node.location} | 提供商: ${node.provider}`);
+            });
+            
+            res.json(processedRows);
         });
-        
-        res.json(processedRows);
     });
 });
-
-// 辅助函数：根据IP地址获取国家代码（简化版本）
-function getCountryCodeFromIP(ip) {
-    // 这里可以集成真实的IP地理位置API
-    // 暂时返回null，后续可以扩展
-    if (ip && ip.startsWith('172.')) return 'SG'; // 示例：如果是内网IP，假设为新加坡
-    return null;
-}
-
-// 辅助函数：根据IP地址获取国家名称（简化版本）
-function getCountryNameFromIP(ip) {
-    // 这里可以集成真实的IP地理位置API
-    if (ip && ip.startsWith('172.')) return 'Singapore'; // 示例
-    return null;
-}
 
 // 创建空白节点
 router.post('/nodes', authenticateToken, (req, res) => {
@@ -270,7 +353,7 @@ router.delete('/nodes/:nodeId', authenticateToken, (req, res) => {
     });
 });
 
-// 生成一键安装脚本 - 新版本
+// 生成一键安装脚本
 router.get('/nodes/:nodeId/install-script', authenticateToken, (req, res) => {
     const { nodeId } = req.params;
     
@@ -321,6 +404,7 @@ router.get('/nodes/:nodeId/install-script', authenticateToken, (req, res) => {
         });
     });
 });
+
 // 简单测试端点
 router.get('/test', (req, res) => {
     console.log('🧪 管理员路由测试端点被访问');
