@@ -1,0 +1,359 @@
+/**
+ * 国旗显示模块 - CSS 样式
+ * 版本: 1.0.0
+ * 作者: VPS Monitor Team
+ * 
+ * 使用方法:
+ * <link rel="stylesheet" href="assets/css/flag.css">
+ * <script src="assets/js/flag.js"></script>
+ */
+
+/* =============================================================================
+   基础国旗样式
+   ============================================================================= */
+
+.country-flag {
+    display: inline-block;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+/* 默认尺寸 */
+.country-flag {
+    width: 20px;
+    height: 15px;
+}
+
+/* =============================================================================
+   尺寸变体
+   ============================================================================= */
+
+/* 小尺寸国旗 */
+.country-flag.flag-sm {
+    width: 16px;
+    height: 12px;
+    margin-right: 4px;
+}
+
+/* 中等尺寸国旗 */
+.country-flag.flag-md {
+    width: 24px;
+    height: 18px;
+    margin-right: 8px;
+}
+
+/* 大尺寸国旗 */
+.country-flag.flag-lg {
+    width: 32px;
+    height: 24px;
+    margin-right: 10px;
+}
+
+/* 超大尺寸国旗 */
+.country-flag.flag-xl {
+    width: 48px;
+    height: 36px;
+    margin-right: 12px;
+}
+
+/* =============================================================================
+   形状变体
+   ============================================================================= */
+
+/* 圆形国旗 */
+.country-flag.flag-rounded {
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+}
+
+/* 圆角国旗 */
+.country-flag.flag-round {
+    border-radius: 4px;
+}
+
+/* 方形国旗 */
+.country-flag.flag-square {
+    width: 20px;
+    height: 20px;
+}
+
+/* =============================================================================
+   状态样式
+   ============================================================================= */
+
+/* 默认状态（地球图标） */
+.country-flag.flag-default {
+    background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23666"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>');
+    background-color: #f8f9fa;
+}
+
+/* 加载中状态 */
+.country-flag.flag-loading {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: flag-loading 1.5s infinite;
+}
+
+/* 错误状态 */
+.country-flag.flag-error {
+    background-color: #f8d7da;
+    background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23721c24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>');
+    border-color: #f5c6cb;
+}
+
+/* 未知状态 */
+.country-flag.flag-unknown {
+    background-color: #e2e3e5;
+    background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23495057"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>');
+    border-color: #ced4da;
+}
+
+/* =============================================================================
+   加载动画
+   ============================================================================= */
+
+@keyframes flag-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* =============================================================================
+   交互效果
+   ============================================================================= */
+
+/* 悬停效果 */
+.country-flag.flag-hover:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+    position: relative;
+}
+
+/* 点击效果 */
+.country-flag.flag-clickable {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.country-flag.flag-clickable:hover {
+    opacity: 0.8;
+}
+
+.country-flag.flag-clickable:active {
+    transform: scale(0.95);
+}
+
+/* =============================================================================
+   主题变体
+   ============================================================================= */
+
+/* 暗色主题 */
+.dark-theme .country-flag {
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.dark-theme .country-flag.flag-default {
+    background-color: #343a40;
+    filter: brightness(0.8);
+}
+
+/* 高对比度主题 */
+.high-contrast .country-flag {
+    border: 2px solid #000;
+    box-shadow: none;
+}
+
+/* =============================================================================
+   特殊效果
+   ============================================================================= */
+
+/* 阴影效果 */
+.country-flag.flag-shadow {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* 发光效果 */
+.country-flag.flag-glow {
+    box-shadow: 0 0 8px rgba(0, 123, 255, 0.4);
+}
+
+/* 边框效果 */
+.country-flag.flag-border {
+    border: 2px solid #007bff;
+}
+
+/* 金色边框（VIP标识） */
+.country-flag.flag-vip {
+    border: 2px solid #ffc107;
+    box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+}
+
+/* =============================================================================
+   国旗容器样式
+   ============================================================================= */
+
+/* 国旗与文本的容器 */
+.flag-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.flag-container .country-name {
+    font-weight: 500;
+    color: #333;
+}
+
+.flag-container .country-code {
+    font-size: 0.8em;
+    color: #666;
+    font-family: monospace;
+}
+
+/* 国旗列表样式 */
+.flag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
+}
+
+.flag-list-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    transition: all 0.2s ease;
+}
+
+.flag-list-item:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+}
+
+/* =============================================================================
+   工具提示样式
+   ============================================================================= */
+
+.country-flag[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    background: #333;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-top: 25px;
+    margin-left: -20px;
+    opacity: 0;
+    animation: tooltip-show 0.3s ease forwards;
+}
+
+@keyframes tooltip-show {
+    to {
+        opacity: 1;
+    }
+}
+
+/* =============================================================================
+   响应式设计
+   ============================================================================= */
+
+/* 移动设备适配 */
+@media (max-width: 768px) {
+    .country-flag {
+        width: 16px;
+        height: 12px;
+        margin-right: 4px;
+    }
+    
+    .country-flag.flag-sm {
+        width: 14px;
+        height: 10px;
+    }
+    
+    .country-flag.flag-lg {
+        width: 20px;
+        height: 15px;
+    }
+    
+    .flag-container {
+        gap: 4px;
+    }
+}
+
+/* 超小屏幕设备 */
+@media (max-width: 480px) {
+    .country-flag {
+        width: 14px;
+        height: 10px;
+        margin-right: 3px;
+    }
+}
+
+/* 高分辨率屏幕优化 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .country-flag {
+        /* 高清屏幕下使用更高分辨率的图片 */
+        background-size: cover;
+    }
+}
+
+/* =============================================================================
+   打印样式
+   ============================================================================= */
+
+@media print {
+    .country-flag {
+        background: none !important;
+        border: 1px solid #000;
+        width: 16px;
+        height: 12px;
+    }
+    
+    .country-flag::after {
+        content: attr(data-country-code);
+        font-size: 8px;
+        text-align: center;
+        line-height: 10px;
+    }
+}
+
+/* =============================================================================
+   辅助功能
+   ============================================================================= */
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+    .country-flag {
+        border: 2px solid;
+        filter: contrast(1.5);
+    }
+}
+
+/* 减少动画模式 */
+@media (prefers-reduced-motion: reduce) {
+    .country-flag,
+    .country-flag * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
