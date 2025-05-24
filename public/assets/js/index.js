@@ -1,35 +1,51 @@
 /**
- * VPS网络质量监测 - 前台JavaScript（国旗图片修复版）
+ * VPS网络质量监测 - 前台JavaScript（仅修复国旗显示）
  */
 
 let modalChart = null;
 let currentNodeId = null;
 const API_BASE = window.location.origin;
 
-// 创建国旗图片
+// 前台的全局错误处理函数
+window.handleFlagErrorFrontend = function(imgId, fallbackUrl, title, countryCode) {
+    const img = document.getElementById(imgId);
+    if (!img) return;
+    
+    // 检查是否已经尝试过fallback URL
+    if (img.dataset.fallbackTried) {
+        // 如果fallback也失败了，替换为默认图标
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'country-flag flag-default';
+        iconSpan.title = title;
+        iconSpan.textContent = '🌐';
+        iconSpan.style.cssText = 'font-size: 1.2em; margin-right: 6px; vertical-align: middle;';
+        
+        img.parentNode.replaceChild(iconSpan, img);
+    } else {
+        // 尝试fallback URL
+        img.dataset.fallbackTried = 'true';
+        img.src = fallbackUrl;
+    }
+};
+
+// 修复后的国旗图片创建函数
 function createFlagImage(countryCode, countryName, size = 20) {
     if (!countryCode || countryCode === 'XX' || countryCode.length !== 2) {
         return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
     }
     
     const lowerCode = countryCode.toLowerCase();
-    const title = countryName || countryCode.toUpperCase();
+    const title = (countryName || countryCode.toUpperCase()).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    const safeCountryCode = countryCode.toUpperCase().replace(/'/g, '').replace(/"/g, '');
     
     // 使用 flagcdn.com 提供的国旗图片
     const flagUrl = `https://flagcdn.com/w${size}/${lowerCode}.png`;
     const fallbackUrl = `https://flagpedia.net/data/flags/w${size}/${lowerCode}.png`;
     
-    return `
-        <img 
-            src="${flagUrl}" 
-            alt="${title}" 
-            title="${title}"
-            class="country-flag"
-            style="width: ${size}px; height: ${Math.round(size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle; object-fit: cover;"
-            onerror="this.onerror=null; this.src='${fallbackUrl}'; if(!this.complete || this.naturalWidth === 0) { this.style.display='none'; this.insertAdjacentHTML('afterend', '<span class=\\"country-flag flag-text\\" title=\\"${title}\\">[${countryCode.toUpperCase()}]</span>'); }"
-            loading="lazy"
-        />
-    `;
+    // 生成唯一ID避免冲突
+    const uniqueId = `flag_${lowerCode}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    return `<img id="${uniqueId}" src="${flagUrl}" alt="${title}" title="${title}" class="country-flag" style="width: ${size}px; height: ${Math.round(size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle; object-fit: cover;" onerror="handleFlagErrorFrontend('${uniqueId}', '${fallbackUrl}', '${title}', '${safeCountryCode}')" loading="lazy" />`;
 }
 
 // 获取国旗HTML - 修复版本
@@ -288,7 +304,7 @@ function createNodeCard(node, latestData) {
         'china_unicom': '中国联通'
     };
     
-    // 获取国旗 - 使用图片方案
+    // 获取国旗 - 使用修复后的图片方案
     let flagHtml = '';
     let countryDisplay = '';
     
