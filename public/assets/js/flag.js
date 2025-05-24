@@ -1,14 +1,77 @@
-/**
- * 国旗显示模块 - JavaScript 功能
- * 版本: 1.0.0
- * 作者: VPS Monitor Team
- * 
- * 使用方法:
- * 1. 引入CSS: <link rel="stylesheet" href="assets/css/flag.css">
- * 2. 引入JS: <script src="assets/js/flag.js"></script>
- * 3. 初始化: const flagManager = new FlagManager(options);
- * 4. 使用: flagManager.getFlagHtml('SG', 'Singapore');
- */
+
+
+// 修复国旗显示 - 使用图片而不是emoji
+function createFlagImage(countryCode, countryName, options = {}) {
+    const opts = {
+        size: '20',
+        className: 'country-flag',
+        ...options
+    };
+    
+    if (!countryCode || countryCode === 'XX' || countryCode.length !== 2) {
+        return `<span class="${opts.className} flag-default" title="未知国家">🌐</span>`;
+    }
+    
+    const lowerCode = countryCode.toLowerCase();
+    const title = countryName || countryCode.toUpperCase();
+    
+    // 使用 flagcdn.com 提供的国旗图片
+    const flagUrl = `https://flagcdn.com/w${opts.size}/${lowerCode}.png`;
+    const fallbackUrl = `https://flagpedia.net/data/flags/w${opts.size}/${lowerCode}.png`;
+    
+    return `
+        <img 
+            src="${flagUrl}" 
+            alt="${title}" 
+            title="${title}"
+            class="${opts.className}"
+            style="width: ${opts.size}px; height: ${Math.round(opts.size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle;"
+            onerror="this.onerror=null; this.src='${fallbackUrl}'; if(this.onerror) this.style.display='none'; this.parentNode.insertAdjacentHTML('beforeend', '<span class=\\"country-flag flag-default\\" title=\\"${title}\\">🌐</span>');"
+            loading="lazy"
+        />
+    `;
+}
+
+// 重写国旗获取函数
+function getCountryFlagHtml(countryCode, countryName, options = {}) {
+    console.log(`🏁 生成国旗图片: ${countryCode} - ${countryName}`);
+    
+    // 直接使用图片方案
+    return createFlagImage(countryCode, countryName, {
+        size: options.size || '20',
+        className: options.className || 'country-flag'
+    });
+}
+
+// 降级的emoji方案（作为最后备选）
+function countryCodeToFlag(countryCode) {
+    if (!countryCode || typeof countryCode !== 'string' || countryCode.length !== 2) {
+        return '🌐';
+    }
+    
+    // 检查是否支持emoji国旗
+    const testFlag = '🇺🇸';
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = '16px Arial';
+    const metrics = ctx.measureText(testFlag);
+    
+    // 如果emoji国旗不被支持，返回文本
+    if (metrics.width < 20) {
+        return `[${countryCode.toUpperCase()}]`;
+    }
+    
+    try {
+        const codePoints = countryCode
+            .toUpperCase()
+            .split('')
+            .map(char => 127397 + char.charCodeAt(0));
+        
+        return String.fromCodePoint(...codePoints);
+    } catch (error) {
+        return `[${countryCode.toUpperCase()}]`;
+    }
+}
 
 (function(global) {
     'use strict';

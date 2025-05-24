@@ -5,7 +5,7 @@ const { getLocationInfo } = require('../utils/location');
 
 const router = express.Router();
 
-// 注册VPS节点 - 增强版本
+// 注册VPS节点 - 增强版本，确保自动检测地理位置
 router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
     const { name, location, provider, ip_address } = req.body;
     
@@ -39,11 +39,14 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
             let finalProvider = provider;
             let locationInfo = null;
             
-            // 如果位置或提供商需要自动检测
-            if ((location === 'Auto-detect' || !location || provider === 'Auto-detect' || !provider)) {
-                console.log('🔍 开始自动检测地理位置和ISP信息...');
-                locationInfo = await getLocationInfo(cleanIP);
+            // 始终尝试获取地理位置信息（用于自动检测或更新现有信息）
+            console.log('🔍 开始自动检测地理位置和ISP信息...');
+            locationInfo = await getLocationInfo(cleanIP);
+            
+            if (locationInfo) {
+                console.log('✅ 地理位置检测成功:', locationInfo);
                 
+                // 如果位置或提供商需要自动检测，则使用检测结果
                 if (location === 'Auto-detect' || !location) {
                     finalLocation = locationInfo.location_string;
                     console.log(`📍 自动检测到位置: ${finalLocation}`);
@@ -52,6 +55,14 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                 if (provider === 'Auto-detect' || !provider) {
                     finalProvider = locationInfo.isp;
                     console.log(`🏢 自动检测到ISP: ${finalProvider}`);
+                }
+            } else {
+                console.log('⚠️ 地理位置检测失败，使用默认值');
+                if (location === 'Auto-detect' || !location) {
+                    finalLocation = '待检测';
+                }
+                if (provider === 'Auto-detect' || !provider) {
+                    finalProvider = '待检测';
                 }
             }
 
@@ -71,7 +82,7 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                     
                     let updateSQL, updateParams;
                     
-                    if (hasNewColumns) {
+                    if (hasNewColumns && locationInfo) {
                         // 新版本数据库，包含地理位置字段
                         updateSQL = `
                             UPDATE vps_nodes 
@@ -84,15 +95,15 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                             finalLocation, 
                             finalProvider, 
                             cleanIP,
-                            locationInfo?.country_code || null,
-                            locationInfo?.country || null,
-                            locationInfo?.city || null,
-                            locationInfo?.region || null,
-                            locationInfo?.isp || null,
+                            locationInfo.country_code || null,
+                            locationInfo.country || null,
+                            locationInfo.city || null,
+                            locationInfo.region || null,
+                            locationInfo.isp || null,
                             existingNode.id
                         ];
                     } else {
-                        // 旧版本数据库，只更新基本字段
+                        // 旧版本数据库或无地理位置信息，只更新基本字段
                         updateSQL = `
                             UPDATE vps_nodes 
                             SET location = ?, provider = ?, ip_address = ?, 
@@ -112,6 +123,9 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                         console.log(`✅ 空白节点激活成功: ${name} (${cleanIP})`);
                         console.log(`   位置: ${finalLocation}`);
                         console.log(`   提供商: ${finalProvider}`);
+                        if (locationInfo) {
+                            console.log(`   地理信息: ${locationInfo.country} (${locationInfo.country_code})`);
+                        }
                         
                         res.json({
                             success: true,
@@ -132,7 +146,7 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                     updateStmt.finalize();
                 });
             } else if (existingNode) {
-                // 更新现有真实节点
+                // 更新现有真实节点（包括地理位置信息）
                 console.log(`🔄 更新现有节点: ${name} (ID: ${existingNode.id})`);
                 
                 // 检查数据库表是否有新字段
@@ -147,7 +161,7 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                     
                     let updateSQL, updateParams;
                     
-                    if (hasNewColumns) {
+                    if (hasNewColumns && locationInfo) {
                         updateSQL = `
                             UPDATE vps_nodes 
                             SET location = ?, provider = ?, ip_address = ?, 
@@ -159,11 +173,11 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                             finalLocation, 
                             finalProvider, 
                             cleanIP,
-                            locationInfo?.country_code || null,
-                            locationInfo?.country || null,
-                            locationInfo?.city || null,
-                            locationInfo?.region || null,
-                            locationInfo?.isp || null,
+                            locationInfo.country_code || null,
+                            locationInfo.country || null,
+                            locationInfo.city || null,
+                            locationInfo.region || null,
+                            locationInfo.isp || null,
                             existingNode.id
                         ];
                     } else {
@@ -184,6 +198,9 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                         }
                         
                         console.log(`✅ 节点信息更新成功: ${name} (${cleanIP})`);
+                        if (locationInfo) {
+                            console.log(`   地理信息: ${locationInfo.country} (${locationInfo.country_code})`);
+                        }
                         
                         res.json({
                             success: true,
@@ -219,7 +236,7 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                     
                     let insertSQL, insertParams;
                     
-                    if (hasNewColumns) {
+                    if (hasNewColumns && locationInfo) {
                         insertSQL = `
                             INSERT INTO vps_nodes 
                             (name, location, provider, ip_address, last_seen, status, is_placeholder,
@@ -231,11 +248,11 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                             finalLocation, 
                             finalProvider, 
                             cleanIP,
-                            locationInfo?.country_code || null,
-                            locationInfo?.country || null,
-                            locationInfo?.city || null,
-                            locationInfo?.region || null,
-                            locationInfo?.isp || null
+                            locationInfo.country_code || null,
+                            locationInfo.country || null,
+                            locationInfo.city || null,
+                            locationInfo.region || null,
+                            locationInfo.isp || null
                         ];
                     } else {
                         insertSQL = `
@@ -253,6 +270,9 @@ router.post('/nodes/register', authenticateAPIKey, async (req, res) => {
                         }
                         
                         console.log(`✅ 新节点注册成功: ${name} (${cleanIP})`);
+                        if (locationInfo) {
+                            console.log(`   地理信息: ${locationInfo.country} (${locationInfo.country_code})`);
+                        }
                         
                         res.json({
                             success: true,
@@ -519,6 +539,10 @@ router.post('/nodes/:nodeId/heartbeat', authenticateAPIKey, (req, res) => {
         SET last_seen = CURRENT_TIMESTAMP, status = 1 
         WHERE id = ?
     `, [nodeId], function(err) {
+        if (err) {
+            console.error('心跳更新失败:', err);
+            return res.status(500).json({ error: '心跳更新失败' });
+        }
         
         if (this.changes === 0) {
             return res.status(404).json({ error: '节点不存在' });
@@ -528,6 +552,43 @@ router.post('/nodes/:nodeId/heartbeat', authenticateAPIKey, (req, res) => {
             success: true,
             timestamp: new Date().toISOString(),
             nodeId: nodeId
+        });
+    });
+});
+
+// 节点状态更新端点（用于客户端下线通知）
+router.post('/nodes/:nodeId/status', authenticateAPIKey, (req, res) => {
+    const { nodeId } = req.params;
+    const { status } = req.body;
+    
+    console.log(`📡 节点 ${nodeId} 状态更新: ${status}`);
+    
+    let statusValue = 1; // 默认在线
+    if (status === 'offline') {
+        statusValue = 0;
+    }
+    
+    db.run(`
+        UPDATE vps_nodes 
+        SET status = ?, last_seen = CURRENT_TIMESTAMP 
+        WHERE id = ?
+    `, [statusValue, nodeId], function(err) {
+        if (err) {
+            console.error('状态更新失败:', err);
+            return res.status(500).json({ error: '状态更新失败' });
+        }
+        
+        if (this.changes === 0) {
+            return res.status(404).json({ error: '节点不存在' });
+        }
+        
+        console.log(`✅ 节点 ${nodeId} 状态更新为: ${status}`);
+        
+        res.json({
+            success: true,
+            message: '状态更新成功',
+            nodeId: nodeId,
+            status: status
         });
     });
 });

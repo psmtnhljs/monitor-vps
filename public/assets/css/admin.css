@@ -334,6 +334,104 @@ body {
     white-space: pre-wrap;
 }
 
+/* 国旗图片样式 - 添加到 public/assets/css/index.css 和 admin.css */
+
+/* 国旗基础样式 */
+.country-flag {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+    border-radius: 2px;
+    object-fit: cover;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* 图片国旗样式 */
+.country-flag img {
+    display: inline-block;
+    vertical-align: middle;
+    border-radius: 2px;
+    object-fit: cover;
+}
+
+/* 文本国旗样式（降级方案） */
+.country-flag.flag-text {
+    background: #f0f0f0;
+    color: #666;
+    padding: 2px 4px;
+    font-size: 0.7em;
+    font-weight: bold;
+    border-radius: 2px;
+    font-family: monospace;
+}
+
+/* 默认国旗样式 */
+.country-flag.flag-default {
+    font-size: 1.2em;
+    margin-right: 6px;
+}
+
+/* 加载状态 */
+.country-flag.flag-loading {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: flag-loading 1.5s infinite;
+    width: 20px;
+    height: 15px;
+}
+
+@keyframes flag-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* 错误状态 */
+.country-flag.flag-error {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 2px 4px;
+    font-size: 0.7em;
+    border-radius: 2px;
+}
+
+/* 节点名称中的国旗 */
+.node-name .country-flag {
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+/* 表格中的国旗 */
+table .country-flag {
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+/* 响应式适配 */
+@media (max-width: 768px) {
+    .country-flag {
+        width: 16px !important;
+        height: 12px !important;
+        margin-right: 4px;
+    }
+    
+    .country-flag.flag-text {
+        font-size: 0.6em;
+        padding: 1px 2px;
+    }
+}
+
+/* 高分辨率屏幕优化 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .country-flag img {
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+    }
+}
 @media (max-width: 768px) {
     .container {
         padding: 10px;

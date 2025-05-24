@@ -69,7 +69,7 @@ router.post('/regenerate-api-key', authenticateToken, (req, res) => {
     });
 });
 
-// 获取所有节点（管理员）- 修复显示问题
+// 获取所有节点（管理员）- 最终修复版本
 router.get('/nodes', authenticateToken, (req, res) => {
     console.log('🌐 管理员请求节点列表...');
     
@@ -85,6 +85,8 @@ router.get('/nodes', authenticateToken, (req, res) => {
         
         const columnNames = columns.map(col => col.name);
         const hasNewColumns = columnNames.includes('country_code');
+        
+        console.log(`📊 表结构状态: ${hasNewColumns ? '已升级（包含地理位置字段）' : '基础版本'}`);
         
         let selectSQL;
         if (hasNewColumns) {
@@ -157,6 +159,7 @@ router.get('/nodes', authenticateToken, (req, res) => {
                     locationDisplay = `${row.city}, ${row.country_name}`;
                     countryCode = row.country_code;
                     countryName = row.country_name;
+                    console.log(`   📍 使用新字段数据: ${locationDisplay}`);
                 } else if (row.location && row.location !== 'Auto-detect' && row.location !== '待检测') {
                     // 使用原有location字段
                     locationDisplay = row.location;
@@ -167,38 +170,26 @@ router.get('/nodes', authenticateToken, (req, res) => {
                             countryName = parts[parts.length - 1].trim();
                         }
                     }
+                    console.log(`   📍 使用location字段: ${locationDisplay}`);
                 } else if (row.location === 'Auto-detect' || row.location === '待检测') {
                     locationDisplay = '待检测';
+                    console.log(`   📍 位置状态: ${locationDisplay}`);
                 }
                 
-                // 正确处理提供商显示
+                // 正确处理提供商显示 - 优先使用ISP字段
                 let providerDisplay = '未知提供商';
                 
                 if (hasNewColumns && row.isp && row.isp !== 'Unknown ISP') {
-                    // 优先使用ISP字段
+                    // 优先使用ISP字段（已经过清理）
                     providerDisplay = row.isp;
+                    console.log(`   🏢 使用ISP字段: ${providerDisplay}`);
                 } else if (row.provider && row.provider !== 'Auto-detect' && row.provider !== '待检测') {
-                    // 使用原有provider字段，但需要清理数据
-                    let cleanProvider = row.provider;
-                    
-                    // 检查是否包含位置信息（如 "Singapore, SingaporeAlibaba..."）
-                    if (cleanProvider.includes(',') && cleanProvider.includes('Singapore')) {
-                        // 提取真正的ISP信息（逗号后面的部分）
-                        const parts = cleanProvider.split(',');
-                        if (parts.length > 1) {
-                            // 获取最后一部分，去掉可能的重复地名
-                            let ispPart = parts[parts.length - 1].trim();
-                            // 移除可能重复的地名
-                            ispPart = ispPart.replace(/^Singapore\s*/, '');
-                            if (ispPart) {
-                                cleanProvider = ispPart;
-                            }
-                        }
-                    }
-                    
-                    providerDisplay = cleanProvider;
+                    // 使用原有provider字段，应用保守清理
+                    providerDisplay = cleanProviderNameSafe(row.provider);
+                    console.log(`   🏢 使用provider字段（清理后）: ${row.provider} -> ${providerDisplay}`);
                 } else if (row.provider === 'Auto-detect' || row.provider === '待检测') {
                     providerDisplay = '待检测';
+                    console.log(`   🏢 提供商状态: ${providerDisplay}`);
                 }
                 
                 console.log(`✅ 处理结果:`, {
@@ -256,6 +247,54 @@ router.get('/nodes', authenticateToken, (req, res) => {
         });
     });
 });
+
+// 安全的提供商名称清理函数
+function cleanProviderNameSafe(provider) {
+    if (!provider || provider === 'Auto-detect' || provider === '待检测') {
+        return '待检测';
+    }
+    
+    let cleanProvider = provider.trim();
+    
+    console.log(`🧹 安全清理提供商名称: "${cleanProvider}"`);
+    
+    // 只进行最基本的清理
+    
+    // 1. 处理明显的格式问题："Location, LocationCompany" -> "Company"
+    if (cleanProvider.includes(',')) {
+        const parts = cleanProvider.split(',');
+        if (parts.length === 2) {
+            const firstPart = parts[0].trim();
+            const secondPart = parts[1].trim();
+            
+            // 如果第二部分以第一部分开头，说明有重复
+            if (secondPart.toLowerCase().startsWith(firstPart.toLowerCase())) {
+                cleanProvider = secondPart.substring(firstPart.length).trim();
+                console.log(`   🔧 移除重复前缀: "${provider}" -> "${cleanProvider}"`);
+            }
+        }
+    }
+    
+    // 2. 只处理明显的重复模式
+    const originalLength = cleanProvider.length;
+    cleanProvider = cleanProvider.replace(/(\w{4,})\1+/gi, '$1');
+    if (cleanProvider.length !== originalLength) {
+        console.log(`   🔧 移除重复单词: "${provider}" -> "${cleanProvider}"`);
+    }
+    
+    // 3. 清理开头和结尾的标点
+    cleanProvider = cleanProvider.replace(/^[\s,.-]+|[\s,.-]+$/g, '');
+    
+    // 4. 如果清理后太短或为空，使用原始名称
+    if (!cleanProvider || cleanProvider.length < 2) {
+        cleanProvider = provider;
+        console.log(`   ⚠️ 清理后过短，恢复原始名称: "${cleanProvider}"`);
+    }
+    
+    console.log(`✅ 提供商名称清理完成: "${provider}" -> "${cleanProvider}"`);
+    
+    return cleanProvider;
+}
 
 // 创建空白节点
 router.post('/nodes', authenticateToken, (req, res) => {
