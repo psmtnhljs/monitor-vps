@@ -1,19 +1,111 @@
 /**
- * VPS网络质量监测 - 管理后台JavaScript（仅修复国旗显示，保持原有逻辑）
+ * VPS网络质量监测 - 管理后台JavaScript（动态国旗系统版）
+ * 自动从API获取国家信息，无需维护庞大的国家映射表
  */
 
 let authToken = localStorage.getItem('adminToken');
 const API_BASE = window.location.origin;
 let debugMode = false;
 
-// 全局错误处理函数 - 修复语法错误
-window.handleFlagError = function(imgId, fallbackUrl, title, countryCode) {
+// 动态国旗系统实例（从上面的系统加载）
+let flagSystem = null;
+
+// 初始化动态国旗系统
+function initDynamicFlagSystem() {
+    if (typeof DynamicFlagSystem !== 'undefined') {
+        flagSystem = new DynamicFlagSystem();
+        console.log('✅ 动态国旗系统初始化成功');
+    } else {
+        console.warn('⚠️ 动态国旗系统未加载，使用fallback方案');
+    }
+}
+
+// 智能国旗创建函数 - 集成动态系统
+async function createSmartFlag(locationOrCountry, countryName, size = 20) {
+    // 如果动态系统可用，使用动态系统
+    if (flagSystem) {
+        try {
+            let countryCode = null;
+            let finalCountryName = countryName;
+
+            // 1. 如果已经是有效的国家代码
+            if (locationOrCountry && locationOrCountry.length === 2 && /^[A-Z]{2}$/i.test(locationOrCountry)) {
+                countryCode = locationOrCountry.toUpperCase();
+            }
+            // 2. 从位置字符串解析
+            else if (locationOrCountry) {
+                console.log(`🔍 动态解析位置: ${locationOrCountry}`);
+                
+                if (locationOrCountry.includes(',')) {
+                    // 位置格式: "City, Country"
+                    const result = await flagSystem.extractCountryFromLocation(locationOrCountry);
+                    if (result) {
+                        countryCode = result.country_code;
+                        finalCountryName = result.country_name;
+                    }
+                } else {
+                    // 直接查询国家名
+                    countryCode = await flagSystem.getCountryCode(locationOrCountry);
+                    finalCountryName = finalCountryName || locationOrCountry;
+                }
+            }
+
+            // 3. 生成国旗HTML
+            if (countryCode && countryCode !== 'XX') {
+                return await createFlagImageWithFallback(countryCode, finalCountryName, size);
+            }
+        } catch (error) {
+            console.warn('动态国旗生成失败，使用fallback:', error);
+        }
+    }
+
+    // Fallback: 使用基础映射
+    const basicCountryCode = getBasicCountryCode(locationOrCountry);
+    if (basicCountryCode) {
+        return await createFlagImageWithFallback(basicCountryCode, countryName || locationOrCountry, size);
+    }
+
+    // 最终fallback: 默认图标
+    return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
+}
+
+// 创建带有多重fallback的国旗图片
+async function createFlagImageWithFallback(countryCode, countryName, size = 20) {
+    if (!countryCode || countryCode === 'XX' || countryCode.length !== 2) {
+        return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
+    }
+    
+    const lowerCode = countryCode.toLowerCase();
+    const title = (countryName || countryCode.toUpperCase()).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    const safeCountryCode = countryCode.toUpperCase();
+    
+    // 多个国旗图片源
+    const flagSources = [
+        `https://flagcdn.com/w${size}/${lowerCode}.png`,
+        `https://flagpedia.net/data/flags/w${size}/${lowerCode}.png`,
+        `https://raw.githubusercontent.com/lipis/flag-icons/main/flags/4x3/${lowerCode}.svg`
+    ];
+    
+    // 生成唯一ID
+    const uniqueId = `flag_${lowerCode}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    return `<img id="${uniqueId}" src="${flagSources[0]}" alt="${title}" title="${title}" class="country-flag" style="width: ${size}px; height: ${Math.round(size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle; object-fit: cover;" onerror="handleSmartFlagError('${uniqueId}', ${JSON.stringify(flagSources)}, '${title}', '${safeCountryCode}')" loading="lazy" />`;
+}
+
+// 智能国旗错误处理
+window.handleSmartFlagError = function(imgId, flagSources, title, countryCode) {
     const img = document.getElementById(imgId);
     if (!img) return;
     
-    // 检查是否已经尝试过fallback URL
-    if (img.dataset.fallbackTried) {
-        // 如果fallback也失败了，替换为文本
+    const currentSrc = img.src;
+    const currentIndex = flagSources.findIndex(src => currentSrc.includes(src.split('/').pop().split('.')[0]));
+    const nextIndex = currentIndex + 1;
+    
+    if (nextIndex < flagSources.length && nextIndex >= 0) {
+        console.log(`🔄 尝试备用国旗源: ${flagSources[nextIndex]}`);
+        img.src = flagSources[nextIndex];
+    } else {
+        // 所有源都失败，显示文本
         const textSpan = document.createElement('span');
         textSpan.className = 'country-flag flag-text';
         textSpan.title = title;
@@ -21,78 +113,68 @@ window.handleFlagError = function(imgId, fallbackUrl, title, countryCode) {
         textSpan.style.cssText = 'background: #f0f0f0; color: #666; padding: 2px 4px; font-size: 0.7em; font-weight: bold; border-radius: 2px; font-family: monospace; margin-right: 6px;';
         
         img.parentNode.replaceChild(textSpan, img);
-    } else {
-        // 尝试fallback URL
-        img.dataset.fallbackTried = 'true';
-        img.src = fallbackUrl;
     }
 };
 
-// 修复后的国旗图片创建函数
-function createFlagImage(countryCode, countryName, size = 20) {
-    if (!countryCode || countryCode === 'XX' || countryCode.length !== 2) {
-        return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
-    }
-    
-    const lowerCode = countryCode.toLowerCase();
-    const title = (countryName || countryCode.toUpperCase()).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-    const safeCountryCode = countryCode.toUpperCase().replace(/'/g, '').replace(/"/g, '');
-    
-    // 使用 flagcdn.com 提供的国旗图片
-    const flagUrl = `https://flagcdn.com/w${size}/${lowerCode}.png`;
-    const fallbackUrl = `https://flagpedia.net/data/flags/w${size}/${lowerCode}.png`;
-    
-    // 生成唯一ID避免冲突
-    const uniqueId = `flag_${lowerCode}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    return `<img id="${uniqueId}" src="${flagUrl}" alt="${title}" title="${title}" class="country-flag" style="width: ${size}px; height: ${Math.round(size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle; object-fit: cover;" onerror="handleFlagError('${uniqueId}', '${fallbackUrl}', '${title}', '${safeCountryCode}')" loading="lazy" />`;
-}
-
-// 获取国旗HTML - 修复版本
-function getCountryFlagHtml(countryCode, countryName) {
-    console.log(`🏁 生成管理后台国旗: ${countryCode} - ${countryName}`);
-    
-    // 优先使用图片方案
-    if (countryCode && countryCode !== 'XX') {
-        return createFlagImage(countryCode, countryName, 20);
-    }
-    
-    // 降级方案
-    return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
-}
-
-// 根据国家名称获取国家代码
-function getCountryCodeFromName(countryName) {
-    const simpleMap = {
-        'Singapore': 'SG',
-        'United States': 'US',
-        'China': 'CN',
-        'Japan': 'JP',
-        'Korea': 'KR',
-        'South Korea': 'KR',
-        'Hong Kong': 'HK',
-        'Taiwan': 'TW',
-        'Germany': 'DE',
-        'United Kingdom': 'GB',
-        'France': 'FR',
-        'Canada': 'CA',
-        'Australia': 'AU',
-        'India': 'IN',
-        'Russia': 'RU',
-        'Brazil': 'BR',
-        'Netherlands': 'NL',
-        'Sweden': 'SE',
-        'Norway': 'NO',
-        'Denmark': 'DK',
-        'Finland': 'FI',
-        'Switzerland': 'CH'
+// 基础国家代码映射（仅作为fallback）
+function getBasicCountryCode(countryName) {
+    const basicMap = {
+        'Vietnam': 'VN', 'Viet Nam': 'VN', '越南': 'VN',
+        'Singapore': 'SG', '新加坡': 'SG',
+        'United States': 'US', 'USA': 'US', 'America': 'US', '美国': 'US',
+        'China': 'CN', '中国': 'CN',
+        'Japan': 'JP', '日本': 'JP',
+        'South Korea': 'KR', 'Korea': 'KR', '韩国': 'KR',
+        'Germany': 'DE', '德国': 'DE',
+        'United Kingdom': 'GB', 'UK': 'GB', 'Britain': 'GB', '英国': 'GB',
+        'France': 'FR', '法国': 'FR',
+        'Canada': 'CA', '加拿大': 'CA',
+        'Australia': 'AU', '澳大利亚': 'AU',
+        'Russia': 'RU', '俄罗斯': 'RU',
+        'India': 'IN', '印度': 'IN',
+        'Brazil': 'BR', '巴西': 'BR',
+        'Netherlands': 'NL', '荷兰': 'NL',
+        'Switzerland': 'CH', '瑞士': 'CH',
+        'Hong Kong': 'HK', '香港': 'HK',
+        'Taiwan': 'TW', '台湾': 'TW',
+        'Thailand': 'TH', '泰国': 'TH',
+        'Malaysia': 'MY', '马来西亚': 'MY',
+        'Indonesia': 'ID', '印度尼西亚': 'ID',
+        'Philippines': 'PH', '菲律宾': 'PH'
     };
+
+    if (!countryName) return null;
     
-    return simpleMap[countryName] || null;
+    // 直接匹配
+    if (basicMap[countryName]) return basicMap[countryName];
+    
+    // 忽略大小写匹配
+    const lowerName = countryName.toLowerCase();
+    for (const [name, code] of Object.entries(basicMap)) {
+        if (name.toLowerCase() === lowerName) return code;
+    }
+    
+    // 从位置字符串提取（如："Ho Chi Minh City, Vietnam"）
+    if (countryName.includes(',')) {
+        const parts = countryName.split(',').map(part => part.trim());
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const part = parts[i];
+            if (basicMap[part]) return basicMap[part];
+            
+            // 模糊匹配
+            for (const [name, code] of Object.entries(basicMap)) {
+                if (name.toLowerCase() === part.toLowerCase()) return code;
+            }
+        }
+    }
+    
+    return null;
 }
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
+    initDynamicFlagSystem();
+    
     if (authToken) {
         showAdminPage();
     } else {
@@ -108,6 +190,12 @@ function toggleDebug() {
         debugPanel.style.display = 'block';
         updateDebugInfo('调试模式已启用');
         console.log('🐛 调试模式启用');
+        
+        // 显示国旗系统状态
+        if (flagSystem) {
+            const stats = flagSystem.getCacheStats();
+            updateDebugInfo(`国旗缓存: ${stats.size} 个条目`);
+        }
     } else {
         debugPanel.style.display = 'none';
         console.log('🐛 调试模式关闭');
@@ -337,7 +425,7 @@ async function regenerateAPIKey() {
     }
 }
 
-// 加载节点列表 - 仅修复国旗显示，保持原有逻辑
+// 加载节点列表 - 集成动态国旗系统
 async function loadNodes() {
     updateDebugInfo('开始加载节点列表...');
     
@@ -380,8 +468,8 @@ async function loadNodes() {
             return;
         }
         
-        // 渲染节点列表 - 使用修复后的国旗显示
-        tbody.innerHTML = nodes.map(node => {
+        // 渲染节点列表 - 使用动态国旗系统
+        const nodeRows = await Promise.all(nodes.map(async (node) => {
             console.log(`🔨 渲染节点: ${node.name} (ID: ${node.id}, 空白: ${node.is_placeholder})`);
             console.log(`🏁 国家信息:`, {
                 country_code: node.country_code,
@@ -398,31 +486,33 @@ async function loadNodes() {
                 'placeholder': '等待激活'
             }[node.connection_status] || '未知';
             
-            // 获取国旗HTML - 使用修复后的图片方案
+            // 智能获取国旗HTML
             let flagHtml = '';
             let countryDisplay = '';
             
             if (node.country_code && node.country_code !== 'XX') {
-                // 有有效的国家代码，使用图片
-                flagHtml = createFlagImage(node.country_code, node.country_name, 20);
+                // 有有效的国家代码，直接使用
+                flagHtml = await createSmartFlag(node.country_code, node.country_name, 20);
                 countryDisplay = node.country_name || node.country_code;
-                console.log(`🏁 节点 ${node.name} 使用国家代码: ${node.country_code} -> ${countryDisplay}`);
+                console.log(`🏁 节点 ${node.name} 使用已有国家代码: ${node.country_code} -> ${countryDisplay}`);
             } else if (node.location && node.location !== 'Auto-detect' && node.location !== '待检测') {
-                // 没有国家代码但有位置信息，尝试从位置信息中提取
-                if (node.location.includes(',')) {
-                    const parts = node.location.split(',');
-                    const countryPart = parts[parts.length - 1].trim();
-                    const detectedCode = getCountryCodeFromName(countryPart);
+                // 动态解析位置信息
+                console.log(`🔍 动态解析节点 ${node.name} 位置: ${node.location}`);
+                
+                try {
+                    flagHtml = await createSmartFlag(node.location, null, 20);
                     
-                    if (detectedCode) {
-                        flagHtml = createFlagImage(detectedCode, countryPart, 20);
-                        countryDisplay = countryPart;
-                        console.log(`🔍 从位置信息解析出国旗: ${countryPart} -> ${detectedCode}`);
+                    // 如果位置包含逗号，提取最后一部分作为国家显示
+                    if (node.location.includes(',')) {
+                        const parts = node.location.split(',').map(part => part.trim());
+                        countryDisplay = parts[parts.length - 1];
                     } else {
-                        flagHtml = '<span class="country-flag flag-default">🌐</span>';
                         countryDisplay = node.location;
                     }
-                } else {
+                    
+                    console.log(`✅ 动态解析成功: ${node.location} -> ${countryDisplay}`);
+                } catch (error) {
+                    console.warn(`⚠️ 动态解析失败: ${error.message}`);
                     flagHtml = '<span class="country-flag flag-default">🌐</span>';
                     countryDisplay = node.location;
                 }
@@ -472,10 +562,18 @@ async function loadNodes() {
                     <td>${actionsHtml}</td>
                 </tr>
             `;
-        }).join('');
+        }));
+        
+        tbody.innerHTML = nodeRows.join('');
         
         console.log('✅ 节点列表渲染完成');
         updateDebugInfo('节点列表渲染完成');
+        
+        // 显示国旗缓存统计
+        if (flagSystem && debugMode) {
+            const stats = flagSystem.getCacheStats();
+            updateDebugInfo(`国旗缓存更新: ${stats.size} 个条目`);
+        }
         
     } catch (error) {
         console.error('❌ 加载节点列表失败:', error);
@@ -531,7 +629,7 @@ function showAddNodeModal() {
     updateDebugInfo('显示添加节点对话框');
 }
 
-// 添加节点 - 保持原有逻辑，不做修改
+// 添加节点 - 保持原有逻辑
 document.getElementById('addNodeForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
@@ -692,3 +790,14 @@ window.onclick = function(event) {
         event.target.style.display = 'none';
     }
 }
+
+// 清除国旗缓存（调试功能）
+function clearFlagCache() {
+    if (flagSystem) {
+        flagSystem.clearCache();
+        updateDebugInfo('国旗缓存已清除');
+        alert('国旗缓存已清除！下次加载时将重新获取所有国旗信息。');
+    }
+}
+
+console.log('✅ 动态国旗管理后台系统已加载完成');
