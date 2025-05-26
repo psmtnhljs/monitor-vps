@@ -1,35 +1,105 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <title>节点创建调试测试</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认证调试工具</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
+        .result { margin-top: 10px; padding: 10px; border-radius: 3px; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        button { padding: 8px 16px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        input { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 3px; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
 </head>
 <body>
-    <h1>节点创建调试测试</h1>
-    
-    <div>
-        <h3>1. 登录测试</h3>
-        <input type="text" id="username" placeholder="用户名" value="admin">
-        <input type="password" id="password" placeholder="密码" value="admin123">
-        <button onclick="testLogin()">登录</button>
+    <h1>🔐 认证调试工具</h1>
+    <p>用于调试VPS监控系统的认证问题</p>
+
+    <!-- 检查本地存储 -->
+    <div class="section">
+        <h3>1. 检查本地存储的令牌</h3>
+        <button onclick="checkLocalStorage()">检查localStorage</button>
+        <div id="localStorageResult"></div>
+    </div>
+
+    <!-- 测试登录 -->
+    <div class="section">
+        <h3>2. 重新登录测试</h3>
+        <div>
+            <input type="text" id="username" placeholder="用户名" value="admin">
+            <input type="password" id="password" placeholder="密码" value="admin123">
+            <button onclick="testLogin()">登录</button>
+        </div>
         <div id="loginResult"></div>
     </div>
-    
-    <div>
-        <h3>2. 创建节点测试</h3>
-        <input type="text" id="nodeName" placeholder="节点名称" value="测试节点01">
-        <input type="text" id="nodeLocation" placeholder="位置（可空）">
-        <input type="text" id="nodeProvider" placeholder="提供商（可空）">
-        <button onclick="testCreateNode()">创建节点</button>
-        <div id="createResult"></div>
+
+    <!-- 测试令牌验证 -->
+    <div class="section">
+        <h3>3. 测试令牌验证</h3>
+        <button onclick="testTokenValidation()">验证当前令牌</button>
+        <div id="tokenResult"></div>
+    </div>
+
+    <!-- 清除令牌并重新登录 -->
+    <div class="section">
+        <h3>4. 重置认证状态</h3>
+        <button onclick="clearAndRelogin()" style="background: #dc3545;">清除令牌并重新登录</button>
+        <div id="resetResult"></div>
     </div>
 
     <script>
-        let authToken = null;
         const API_BASE = window.location.origin;
+
+        function showResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="result ${type}">${message}</div>`;
+        }
+
+        function checkLocalStorage() {
+            const token = localStorage.getItem('adminToken');
+            
+            if (token) {
+                try {
+                    // 解析JWT令牌（不验证签名，只是检查格式）
+                    const parts = token.split('.');
+                    if (parts.length === 3) {
+                        const payload = JSON.parse(atob(parts[1]));
+                        const exp = new Date(payload.exp * 1000);
+                        const now = new Date();
+                        
+                        showResult('localStorageResult', 
+                            `<strong>找到令牌：</strong><br>
+                            <pre>${token.substring(0, 50)}...</pre>
+                            <strong>载荷信息：</strong><br>
+                            <pre>${JSON.stringify(payload, null, 2)}</pre>
+                            <strong>过期时间：</strong> ${exp.toLocaleString()}<br>
+                            <strong>是否过期：</strong> ${now > exp ? '是' : '否'}`, 
+                            now > exp ? 'error' : 'success'
+                        );
+                    } else {
+                        showResult('localStorageResult', 
+                            `令牌格式无效：<pre>${token}</pre>`, 'error');
+                    }
+                } catch (error) {
+                    showResult('localStorageResult', 
+                        `令牌解析失败：${error.message}<br><pre>${token}</pre>`, 'error');
+                }
+            } else {
+                showResult('localStorageResult', '未找到存储的令牌', 'error');
+            }
+        }
 
         async function testLogin() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
+            
+            showResult('loginResult', '正在登录...', 'info');
             
             try {
                 const response = await fetch(`${API_BASE}/api/admin/login`, {
@@ -40,72 +110,96 @@
                     body: JSON.stringify({ username, password })
                 });
                 
-                const data = await response.json();
-                console.log('登录响应:', data);
-                
-                if (data.success) {
-                    authToken = data.token;
-                    document.getElementById('loginResult').innerHTML = '✅ 登录成功';
-                } else {
-                    document.getElementById('loginResult').innerHTML = `❌ 登录失败: ${data.error}`;
-                }
-            } catch (error) {
-                console.error('登录错误:', error);
-                document.getElementById('loginResult').innerHTML = `❌ 登录错误: ${error.message}`;
-            }
-        }
-
-        async function testCreateNode() {
-            if (!authToken) {
-                alert('请先登录');
-                return;
-            }
-
-            const name = document.getElementById('nodeName').value.trim();
-            const location = document.getElementById('nodeLocation').value.trim();
-            const provider = document.getElementById('nodeProvider').value.trim();
-            
-            console.log('发送数据:', { name, location, provider });
-
-            try {
-                const response = await fetch(`${API_BASE}/api/admin/nodes`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({ 
-                        name, 
-                        location: location || 'Auto-detect',
-                        provider: provider || 'Auto-detect'
-                    })
-                });
-                
-                console.log('响应状态:', response.status);
-                console.log('响应头:', [...response.headers.entries()]);
-                
                 const responseText = await response.text();
-                console.log('响应原文:', responseText);
+                console.log('登录响应:', response.status, responseText);
                 
                 let data;
                 try {
                     data = JSON.parse(responseText);
                 } catch (e) {
-                    throw new Error(`无法解析JSON: ${responseText}`);
+                    throw new Error(`服务器返回非JSON数据: ${responseText}`);
                 }
                 
-                console.log('解析后数据:', data);
-                
-                if (data.success) {
-                    document.getElementById('createResult').innerHTML = `✅ 创建成功: 节点ID ${data.nodeId}`;
+                if (response.ok && data.success) {
+                    localStorage.setItem('adminToken', data.token);
+                    showResult('loginResult', 
+                        `<strong>登录成功！</strong><br>
+                        用户: ${data.user.username}<br>
+                        令牌: ${data.token.substring(0, 50)}...<br>
+                        <small>令牌已保存到localStorage</small>`, 'success');
                 } else {
-                    document.getElementById('createResult').innerHTML = `❌ 创建失败: ${data.error}`;
+                    showResult('loginResult', 
+                        `登录失败: ${data.error || '未知错误'}<br>
+                        HTTP状态: ${response.status}<br>
+                        响应: <pre>${responseText}</pre>`, 'error');
                 }
             } catch (error) {
-                console.error('创建节点错误:', error);
-                document.getElementById('createResult').innerHTML = `❌ 创建错误: ${error.message}`;
+                showResult('loginResult', `网络错误: ${error.message}`, 'error');
             }
         }
+
+        async function testTokenValidation() {
+            const token = localStorage.getItem('adminToken');
+            
+            if (!token) {
+                showResult('tokenResult', '没有找到令牌，请先登录', 'error');
+                return;
+            }
+            
+            showResult('tokenResult', '正在验证令牌...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/config`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                const responseText = await response.text();
+                console.log('令牌验证响应:', response.status, responseText);
+                
+                if (response.ok) {
+                    let data;
+                    try {
+                        data = JSON.parse(responseText);
+                        showResult('tokenResult', 
+                            `<strong>令牌验证成功！</strong><br>
+                            配置数据: <pre>${JSON.stringify(data, null, 2)}</pre>`, 'success');
+                    } catch (e) {
+                        showResult('tokenResult', 
+                            `令牌有效，但响应格式异常: <pre>${responseText}</pre>`, 'error');
+                    }
+                } else {
+                    showResult('tokenResult', 
+                        `令牌验证失败<br>
+                        HTTP状态: ${response.status}<br>
+                        响应: <pre>${responseText}</pre>`, 'error');
+                }
+            } catch (error) {
+                showResult('tokenResult', `验证请求失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function clearAndRelogin() {
+            // 清除本地存储
+            localStorage.removeItem('adminToken');
+            showResult('resetResult', '已清除本地令牌，正在重新登录...', 'info');
+            
+            // 等待一下
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 重新登录
+            await testLogin();
+            
+            if (localStorage.getItem('adminToken')) {
+                showResult('resetResult', '重置成功！现在可以尝试使用管理功能了。', 'success');
+            }
+        }
+
+        // 页面加载时自动检查
+        window.onload = function() {
+            checkLocalStorage();
+        };
     </script>
 </body>
 </html>

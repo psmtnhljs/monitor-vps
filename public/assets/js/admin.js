@@ -1,3 +1,255 @@
+// 令牌过期处理补丁 - 添加到你现有 admin.js 文件的开头
+// 在第一行 let authToken = localStorage.getItem('adminToken'); 之后添加以下代码
+
+// ================ 令牌过期处理功能 ================
+
+// 检查令牌是否过期
+function isTokenExpired(token) {
+    if (!token) return true;
+    
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return true;
+        
+        const payload = JSON.parse(atob(parts[1]));
+        const exp = payload.exp * 1000; // 转换为毫秒
+        const now = Date.now();
+        
+        // 如果令牌在5分钟内过期，也认为已过期（提前刷新）
+        return now >= (exp - 5 * 60 * 1000);
+    } catch (error) {
+        console.error('解析令牌失败:', error);
+        return true;
+    }
+}
+
+// 获取令牌剩余时间（分钟）
+function getTokenRemainingMinutes(token) {
+    if (!token) return 0;
+    
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return 0;
+        
+        const payload = JSON.parse(atob(parts[1]));
+        const exp = payload.exp * 1000;
+        const now = Date.now();
+        
+        return Math.max(0, Math.floor((exp - now) / (1000 * 60)));
+    } catch (error) {
+        return 0;
+    }
+}
+
+// 清除无效令牌
+function clearInvalidToken() {
+    localStorage.removeItem('adminToken');
+    authToken = null;
+    console.log('🗑️ 已清除无效令牌');
+    if (typeof updateDebugInfo === 'function') {
+        updateDebugInfo('已清除无效令牌');
+    }
+}
+
+// 显示令牌过期提醒
+function showTokenExpirationWarning(remainingMinutes) {
+    // 移除已存在的警告
+    const existing = document.getElementById('tokenWarning');
+    if (existing) existing.remove();
+    
+    const warningDiv = document.createElement('div');
+    warningDiv.id = 'tokenWarning';
+    warningDiv.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 15px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        z-index: 10000;
+        max-width: 300px;
+    `;
+    
+    warningDiv.innerHTML = `
+        <strong>⚠️ 登录即将过期</strong><br>
+        剩余时间：${remainingMinutes} 分钟<br>
+        <button onclick="refreshToken()" style="margin-top: 10px; margin-right: 10px; padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">延长登录</button>
+        <button onclick="dismissTokenWarning()" style="margin-top: 10px; padding: 5px 10px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer;">忽略</button>
+    `;
+    
+    document.body.appendChild(warningDiv);
+}
+
+// 关闭令牌过期提醒
+function dismissTokenWarning() {
+    const warning = document.getElementById('tokenWarning');
+    if (warning) warning.remove();
+}
+
+// 刷新令牌（重新登录）
+async function refreshToken() {
+    dismissTokenWarning();
+    
+    if (confirm('需要重新登录以延长会话，是否继续？')) {
+        clearInvalidToken();
+        showLoginPage();
+    }
+}
+
+// 改进的fetch包装函数（保持原有函数名不变）
+async function safeFetch(url, options = {}) {
+    // 检查令牌是否过期
+    if (authToken && isTokenExpired(authToken)) {
+        console.log('⚠️ 令牌已过期，自动清除');
+        if (typeof updateDebugInfo === 'function') {
+            updateDebugInfo('令牌已过期，需要重新登录');
+        }
+        clearInvalidToken();
+        
+        if (confirm('登录已过期，是否重新登录？')) {
+            showLoginPage();
+        }
+        throw new Error('令牌已过期，请重新登录');
+    }
+    
+    // 如果需要认证且有令牌，添加认证头
+    if (authToken && options.headers && options.headers['Authorization']) {
+        // 已经有认证头，直接使用原有逻辑
+    } else if (authToken && (url.includes('/api/admin/') || url.includes('/api/nodes/'))) {
+        // 自动添加认证头
+        options.headers = {
+            ...options.headers,
+            'Authorization': `Bearer ${authToken}`
+        };
+    }
+    
+    try {
+        const response = await fetch(url, options);
+        
+        // 处理认证错误
+        if (response.status === 401 || response.status === 403) {
+            console.log('🔒 认证失败，令牌可能已失效');
+            if (typeof updateDebugInfo === 'function') {
+                updateDebugInfo(`认证失败: HTTP ${response.status}`);
+            }
+            clearInvalidToken();
+            
+            // 尝试获取错误详情
+            let errorMessage = '认证失败';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.error || errorMessage;
+            } catch (e) {
+                // 忽略JSON解析错误
+            }
+            
+            // 显示友好的错误提示
+            if (confirm(`${errorMessage}\n\n是否重新登录？`)) {
+                showLoginPage();
+            }
+            
+            throw new Error(errorMessage);
+        }
+        
+        return response;
+    } catch (error) {
+        // 如果不是认证错误，按原有逻辑处理
+        if (!error.message.includes('认证失败') && !error.message.includes('令牌已过期')) {
+            console.error('网络请求失败:', error);
+            if (typeof updateDebugInfo === 'function') {
+                updateDebugInfo(`网络请求失败: ${error.message}`);
+            }
+        }
+        throw error;
+    }
+}
+
+// 检查令牌状态并显示剩余时间（在调试模式下）
+function checkTokenStatus() {
+    if (authToken) {
+        const remainingMinutes = getTokenRemainingMinutes(authToken);
+        
+        if (typeof updateDebugInfo === 'function' && debugMode) {
+            updateDebugInfo(`当前令牌剩余: ${remainingMinutes} 分钟`);
+        }
+        
+        // 如果令牌已过期
+        if (isTokenExpired(authToken)) {
+            console.log('⏰ 检查发现令牌已过期');
+            clearInvalidToken();
+            if (confirm('登录已过期，是否重新登录？')) {
+                showLoginPage();
+            }
+            return false;
+        }
+        // 如果令牌在15分钟内过期，显示警告
+        else if (remainingMinutes <= 15 && remainingMinutes > 5) {
+            showTokenExpirationWarning(remainingMinutes);
+        }
+        // 如果令牌在5分钟内过期，强烈提醒
+        else if (remainingMinutes <= 5 && remainingMinutes > 0) {
+            showTokenExpirationWarning(remainingMinutes);
+        }
+        
+        return true;
+    }
+    return false;
+}
+
+// ================ 修改现有函数以使用令牌检查 ================
+
+// 保存原有的 showAdminPage 函数
+const originalShowAdminPage = typeof showAdminPage !== 'undefined' ? showAdminPage : null;
+
+// 重写 showAdminPage 函数，添加令牌检查
+function showAdminPage() {
+    // 检查令牌状态
+    if (!checkTokenStatus()) {
+        return; // 令牌无效，已处理
+    }
+    
+    // 调用原有逻辑
+    if (originalShowAdminPage) {
+        originalShowAdminPage();
+    } else {
+        // 如果没有原函数，使用基本逻辑
+        document.getElementById('loginPage').classList.add('hidden');
+        document.getElementById('adminPage').classList.remove('hidden');
+        loadConfig();
+        loadNodes();
+    }
+}
+
+// ================ 定期检查令牌有效性 ================
+
+// 定期检查令牌有效性（每3分钟检查一次）
+setInterval(() => {
+    if (authToken) {
+        checkTokenStatus();
+    }
+}, 3 * 60 * 1000); // 3分钟
+
+// 页面可见性变化时检查令牌
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && authToken) {
+        setTimeout(checkTokenStatus, 1000); // 延迟1秒检查
+    }
+});
+
+// 页面关闭时清理
+window.addEventListener('beforeunload', function() {
+    dismissTokenWarning();
+});
+
+console.log('✅ 令牌过期处理功能已加载');
+
+// ================ 使用说明 ================
+// 现在你需要将所有的 fetch() 调用替换为 safeFetch()
+// 或者保持原有的 fetch，safeFetch 会自动处理认证错误
+
 /**
  * VPS网络质量监测 - 管理后台JavaScript（动态国旗系统版）
  * 自动从API获取国家信息，无需维护庞大的国家映射表

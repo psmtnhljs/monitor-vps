@@ -459,27 +459,40 @@ router.get('/nodes/:nodeId/latest', (req, res) => {
 });
 
 // 获取图表数据
+// 获取图表数据 - 修复时区问题
 router.get('/chart-data/:nodeId/:ispName', (req, res) => {
     const { nodeId, ispName } = req.params;
     const { timeRange = '24h' } = req.query;
     
-    let timeFilter;
+    // 使用UTC时间计算时间范围
+    const now = new Date();
+    let hoursBack;
+    
     switch(timeRange) {
         case '1h':
-            timeFilter = "datetime('now', '-1 hour')";
+            hoursBack = 1;
             break;
         case '6h':
-            timeFilter = "datetime('now', '-6 hours')";
+            hoursBack = 6;
             break;
         case '24h':
-            timeFilter = "datetime('now', '-24 hours')";
+            hoursBack = 24;
             break;
         case '7d':
-            timeFilter = "datetime('now', '-7 days')";
+            hoursBack = 24 * 7;
             break;
         default:
-            timeFilter = "datetime('now', '-24 hours')";
+            hoursBack = 24;
     }
+    
+    // 计算起始时间（UTC）
+    const startTimeUTC = new Date(now.getTime() - hoursBack * 60 * 60 * 1000).toISOString();
+    const nowUTC = now.toISOString();
+    
+    console.log(`📊 查询图表数据: 节点${nodeId}, ISP:${ispName}, 时间范围:${timeRange}`);
+    console.log(`   起始UTC时间: ${startTimeUTC}`);
+    console.log(`   当前UTC时间: ${nowUTC}`);
+    console.log(`   查询${hoursBack}小时内的数据`);
 
     db.all(`
         SELECT 
@@ -491,12 +504,18 @@ router.get('/chart-data/:nodeId/:ispName', (req, res) => {
         WHERE node_id = ? 
             AND isp_name = ?
             AND test_type = 'ping'
-            AND test_time >= ${timeFilter}
+            AND test_time >= ?
         ORDER BY test_time ASC
-    `, [nodeId, ispName], (err, rows) => {
+    `, [nodeId, ispName, startTimeUTC], (err, rows) => {
         if (err) {
             console.error('获取图表数据失败:', err);
             return res.status(500).json({ error: '查询失败' });
+        }
+        
+        console.log(`   查询结果: 找到 ${rows.length} 条数据记录`);
+        if (rows.length > 0) {
+            console.log(`   最早记录: ${rows[0].test_time}`);
+            console.log(`   最晚记录: ${rows[rows.length - 1].test_time}`);
         }
         
         // 格式化数据
@@ -511,7 +530,8 @@ router.get('/chart-data/:nodeId/:ispName', (req, res) => {
             const time = new Date(row.test_time);
             const timeLabel = time.toLocaleTimeString('zh-CN', { 
                 hour: '2-digit', 
-                minute: '2-digit' 
+                minute: '2-digit',
+                timeZone: 'UTC'  // 统一使用UTC时间显示，避免时区混乱
             });
             
             timeLabels.add(timeLabel);
@@ -525,6 +545,8 @@ router.get('/chart-data/:nodeId/:ispName', (req, res) => {
         });
         
         chartData.labels = Array.from(timeLabels).sort();
+        
+        console.log(`   返回 ${chartData.ping.length} 个数据点，${chartData.labels.length} 个时间标签`);
         
         res.json(chartData);
     });
