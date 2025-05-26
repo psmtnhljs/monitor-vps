@@ -272,8 +272,12 @@ function initDynamicFlagSystem() {
     }
 }
 
-// 智能国旗创建函数 - 集成动态系统
+// 修复的智能国旗创建函数 - 替换 admin.js 中对应的部分
+
+// 智能国旗创建函数 - 修复版本
 async function createSmartFlag(locationOrCountry, countryName, size = 20) {
+    console.log(`🏁 createSmartFlag 调用:`, { locationOrCountry, countryName, size });
+    
     // 如果动态系统可用，使用动态系统
     if (flagSystem) {
         try {
@@ -283,6 +287,7 @@ async function createSmartFlag(locationOrCountry, countryName, size = 20) {
             // 1. 如果已经是有效的国家代码
             if (locationOrCountry && locationOrCountry.length === 2 && /^[A-Z]{2}$/i.test(locationOrCountry)) {
                 countryCode = locationOrCountry.toUpperCase();
+                console.log(`🔍 检测到国家代码: ${countryCode}`);
             }
             // 2. 从位置字符串解析
             else if (locationOrCountry) {
@@ -294,34 +299,43 @@ async function createSmartFlag(locationOrCountry, countryName, size = 20) {
                     if (result) {
                         countryCode = result.country_code;
                         finalCountryName = result.country_name;
+                        console.log(`✅ 位置解析成功: ${countryCode} - ${finalCountryName}`);
                     }
                 } else {
                     // 直接查询国家名
                     countryCode = await flagSystem.getCountryCode(locationOrCountry);
                     finalCountryName = finalCountryName || locationOrCountry;
+                    console.log(`✅ 国家名查询结果: ${countryCode}`);
                 }
             }
 
             // 3. 生成国旗HTML
             if (countryCode && countryCode !== 'XX') {
+                console.log(`🎨 生成国旗HTML: ${countryCode} - ${finalCountryName}`);
                 return await createFlagImageWithFallback(countryCode, finalCountryName, size);
+            } else {
+                console.log(`⚠️ 无有效国家代码，使用默认图标`);
             }
         } catch (error) {
             console.warn('动态国旗生成失败，使用fallback:', error);
         }
+    } else {
+        console.warn('⚠️ flagSystem 未初始化，使用基础映射');
     }
 
     // Fallback: 使用基础映射
     const basicCountryCode = getBasicCountryCode(locationOrCountry);
     if (basicCountryCode) {
+        console.log(`🔄 使用基础映射: ${locationOrCountry} -> ${basicCountryCode}`);
         return await createFlagImageWithFallback(basicCountryCode, countryName || locationOrCountry, size);
     }
 
     // 最终fallback: 默认图标
+    console.log(`🌐 使用默认图标`);
     return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
 }
 
-// 创建带有多重fallback的国旗图片
+// 创建带有多重fallback的国旗图片 - 修复版本
 async function createFlagImageWithFallback(countryCode, countryName, size = 20) {
     if (!countryCode || countryCode === 'XX' || countryCode.length !== 2) {
         return '<span class="country-flag flag-default" title="未知国家">🌐</span>';
@@ -341,34 +355,41 @@ async function createFlagImageWithFallback(countryCode, countryName, size = 20) 
     // 生成唯一ID
     const uniqueId = `flag_${lowerCode}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    console.log(`🖼️ 创建国旗图片: ${safeCountryCode} (${title})`);
+    
     return `<img id="${uniqueId}" src="${flagSources[0]}" alt="${title}" title="${title}" class="country-flag" style="width: ${size}px; height: ${Math.round(size * 0.75)}px; margin-right: 6px; border-radius: 2px; vertical-align: middle; object-fit: cover;" onerror="handleSmartFlagError('${uniqueId}', ${JSON.stringify(flagSources)}, '${title}', '${safeCountryCode}')" loading="lazy" />`;
 }
 
-// 智能国旗错误处理
-window.handleSmartFlagError = function(imgId, flagSources, title, countryCode) {
-    const img = document.getElementById(imgId);
-    if (!img) return;
+// 修复的初始化函数
+function initDynamicFlagSystem() {
+    console.log('🔄 初始化动态国旗系统...');
     
-    const currentSrc = img.src;
-    const currentIndex = flagSources.findIndex(src => currentSrc.includes(src.split('/').pop().split('.')[0]));
-    const nextIndex = currentIndex + 1;
-    
-    if (nextIndex < flagSources.length && nextIndex >= 0) {
-        console.log(`🔄 尝试备用国旗源: ${flagSources[nextIndex]}`);
-        img.src = flagSources[nextIndex];
+    if (typeof DynamicFlagSystem !== 'undefined') {
+        try {
+            flagSystem = new DynamicFlagSystem();
+            console.log('✅ 动态国旗系统初始化成功');
+            
+            // 测试系统是否正常工作
+            setTimeout(async () => {
+                try {
+                    const testResult = await flagSystem.getCountryCode('United States');
+                    console.log('🧪 系统测试结果:', testResult);
+                } catch (error) {
+                    console.error('🧪 系统测试失败:', error);
+                }
+            }, 1000);
+            
+        } catch (error) {
+            console.error('❌ 动态国旗系统初始化失败:', error);
+            flagSystem = null;
+        }
     } else {
-        // 所有源都失败，显示文本
-        const textSpan = document.createElement('span');
-        textSpan.className = 'country-flag flag-text';
-        textSpan.title = title;
-        textSpan.textContent = `[${countryCode}]`;
-        textSpan.style.cssText = 'background: #f0f0f0; color: #666; padding: 2px 4px; font-size: 0.7em; font-weight: bold; border-radius: 2px; font-family: monospace; margin-right: 6px;';
-        
-        img.parentNode.replaceChild(textSpan, img);
+        console.warn('⚠️ DynamicFlagSystem 类未找到，使用fallback方案');
+        flagSystem = null;
     }
-};
+}
 
-// 基础国家代码映射（仅作为fallback）
+// 修复的基础国家代码映射（保持原有逻辑）
 function getBasicCountryCode(countryName) {
     const basicMap = {
         'Vietnam': 'VN', 'Viet Nam': 'VN', '越南': 'VN',
@@ -421,6 +442,29 @@ function getBasicCountryCode(countryName) {
     }
     
     return null;
+}
+
+// 测试函数 - 用于调试
+function testFlagSystem() {
+    console.log('🧪 开始测试国旗系统...');
+    
+    const testCases = [
+        'United States',
+        'Singapore', 
+        'China',
+        'United Kingdom',
+        'Ho Chi Minh City, Vietnam',
+        'Tokyo, Japan'
+    ];
+    
+    testCases.forEach(async (testCase) => {
+        try {
+            const result = await createSmartFlag(testCase, testCase, 20);
+            console.log(`🧪 测试 "${testCase}":`, result ? '✅ 成功' : '❌ 失败');
+        } catch (error) {
+            console.error(`🧪 测试 "${testCase}" 出错:`, error);
+        }
+    });
 }
 
 // 初始化
