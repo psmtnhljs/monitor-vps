@@ -421,31 +421,123 @@ function getLatencyClass(latency) {
 }
 
 // 加载模态框图表数据
+// 修复的loadModalChart函数，增加更多调试信息
 async function loadModalChart() {
-    if (!currentNodeId) return;
+    if (!currentNodeId) {
+        console.error('❌ currentNodeId 未设置');
+        return;
+    }
 
     const modalIspSelect = document.getElementById('modalIspSelect');
     const modalTimeRange = document.getElementById('modalTimeRange');
     
     if (!modalIspSelect || !modalTimeRange) {
-        console.error('模态框控件元素未找到');
+        console.error('❌ 模态框控件元素未找到');
         return;
     }
 
     const ispName = modalIspSelect.value;
     const timeRange = modalTimeRange.value;
+    
+    console.log(`🔄 加载图表数据开始`);
+    console.log(`   节点ID: ${currentNodeId}`);
+    console.log(`   ISP: ${ispName}`);
+    console.log(`   时间范围: ${timeRange}`);
+
+    // 显示加载状态
+    const chartContainer = document.querySelector('.chart-container-modal');
+    if (chartContainer) {
+        chartContainer.innerHTML = `
+            <div style="display: flex; justify-content: center; align-items: center; height: 100%; color: #666;">
+                <div style="text-align: center;">
+                    <div style="width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px;"></div>
+                    <div>正在加载图表数据...</div>
+                </div>
+            </div>
+        `;
+    }
 
     try {
-        const response = await fetch(`${API_BASE}/api/chart-data/${currentNodeId}/${ispName}?timeRange=${timeRange}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        const data = await response.json();
+        const url = `${API_BASE}/api/chart-data/${currentNodeId}/${ispName}?timeRange=${timeRange}`;
+        console.log(`📡 请求URL: ${url}`);
+        
+        const response = await fetch(url);
+        console.log(`📡 响应状态: ${response.status} ${response.statusText}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ HTTP错误: ${response.status} - ${errorText}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const responseText = await response.text();
+        console.log(`📦 原始响应内容:`, responseText.substring(0, 500) + '...');
+        
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            console.error('❌ JSON解析失败:', parseError);
+            console.error('响应内容:', responseText);
+            throw new Error('服务器返回的不是有效的JSON数据');
+        }
+        
+        console.log('📦 解析后的数据:', data);
+        
+        // 详细数据验证
+        if (!data) {
+            throw new Error('服务器返回空数据');
+        }
+        
+        if (!data.ping || !Array.isArray(data.ping)) {
+            console.warn('⚠️ ping数据异常，尝试修复...');
+            data.ping = data.ping || [];
+        }
+        
+        if (!data.labels || !Array.isArray(data.labels)) {
+            console.warn('⚠️ labels数据异常，尝试修复...');
+            data.labels = data.labels || [];
+        }
+        
+        console.log(`✅ 数据验证通过:`);
+        console.log(`   - ping数据: ${data.ping.length} 个点`);
+        console.log(`   - labels: ${data.labels.length} 个标签`);
+        console.log(`   - 第一个数据点:`, data.ping[0]);
+        console.log(`   - 最后一个数据点:`, data.ping[data.ping.length - 1]);
+        
+        // 重新创建canvas元素
+        if (chartContainer) {
+            chartContainer.innerHTML = '<canvas id="modalChart" style="width: 100%; height: 100%;"></canvas>';
+        }
+        
+        // 等待DOM更新
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // 渲染图表
         updateModalChart(data);
+        
     } catch (error) {
-        console.error('获取图表数据失败:', error);
+        console.error('❌ 获取图表数据失败:', error);
+        console.error('错误详情:', error.stack);
+        
+        if (chartContainer) {
+            chartContainer.innerHTML = `
+                <div style="display: flex; justify-content: center; align-items: center; height: 100%; color: #dc3545; text-align: center;">
+                    <div>
+                        <div style="font-size: 32px; margin-bottom: 15px;">⚠️</div>
+                        <div style="font-weight: bold; margin-bottom: 10px; font-size: 1.1em;">加载图表数据失败</div>
+                        <div style="font-size: 0.9em; color: #666; margin-bottom: 20px; max-width: 300px;">${error.message}</div>
+                        <button onclick="loadModalChart()" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1em;">
+                            🔄 重新加载
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
     }
 }
 
-// 更新模态框图表
+// 修复图表显示问题的版本
 function updateModalChart(data) {
     const ctx = document.getElementById('modalChart');
     if (!ctx) {
@@ -453,7 +545,10 @@ function updateModalChart(data) {
         return;
     }
 
-    if (modalChart) modalChart.destroy();
+    if (modalChart) {
+        modalChart.destroy();
+        modalChart = null;
+    }
 
     try {
         if (typeof Chart === 'undefined') {
@@ -461,57 +556,265 @@ function updateModalChart(data) {
             return;
         }
 
+        console.log('📊 开始渲染图表，原始数据:', data);
+
+        // 检查数据有效性
+        if (!data || !data.ping || !Array.isArray(data.ping)) {
+            console.error('图表数据格式无效:', data);
+            return;
+        }
+
+        const dataPointCount = data.ping.length;
+        const aggregateInfo = data.aggregateInfo || {};
+        
+        console.log(`   数据点数量: ${dataPointCount}`);
+        console.log(`   标签数量: ${data.labels ? data.labels.length : 0}`);
+        console.log(`   聚合信息:`, aggregateInfo);
+
+        // 检查每个数据点的结构
+        console.log('   前3个数据点详情:', data.ping.slice(0, 3));
+
+        // 根据数据点数量调整显示
+        let pointRadius = dataPointCount > 100 ? 1 : dataPointCount > 50 ? 2 : 4;
+        let pointHoverRadius = pointRadius + 2;
+        let borderWidth = dataPointCount > 100 ? 2 : 3;
+        let tension = dataPointCount > 100 ? 0.4 : 0.1;
+
+        // 准备标签和数据
+        let chartLabels = [];
+        let chartData = [];
+
+        if (data.labels && data.labels.length > 0) {
+            // 使用提供的标签
+            chartLabels = data.labels;
+            chartData = data.ping.map(point => {
+                if (typeof point === 'object' && point.y !== undefined) {
+                    return point.y;
+                } else if (typeof point === 'number') {
+                    return point;
+                } else {
+                    console.warn('无效数据点:', point);
+                    return 0;
+                }
+            });
+        } else {
+            // 从数据点生成标签
+            data.ping.forEach((point, index) => {
+                if (typeof point === 'object') {
+                    chartLabels.push(point.x || `点${index + 1}`);
+                    chartData.push(point.y || 0);
+                } else {
+                    chartLabels.push(`点${index + 1}`);
+                    chartData.push(point || 0);
+                }
+            });
+        }
+
+        console.log('   处理后的标签:', chartLabels.slice(0, 5), '...(共' + chartLabels.length + '个)');
+        console.log('   处理后的数据:', chartData.slice(0, 5), '...(共' + chartData.length + '个)');
+
+        // 确保标签和数据数量匹配
+        const minLength = Math.min(chartLabels.length, chartData.length);
+        chartLabels = chartLabels.slice(0, minLength);
+        chartData = chartData.slice(0, minLength);
+
+        console.log(`   最终数据点: ${chartData.length} 个, 标签: ${chartLabels.length} 个`);
+
+        // 创建图表
         modalChart = new Chart(ctx.getContext('2d'), {
             type: 'line',
             data: {
-                labels: data.labels || [],
+                labels: chartLabels,
                 datasets: [{
-                    label: 'Ping延迟 (ms)',
-                    data: (data.ping || []).map(p => p.y),
-                    borderColor: 'rgb(75, 192, 192)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                    tension: 0.1,
+                    label: `Ping延迟 (${aggregateInfo.interval || 'ms'})`,
+                    data: chartData,
+                    borderColor: '#4BC0C0',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderWidth: borderWidth,
+                    tension: tension,
                     fill: true,
-                    pointBackgroundColor: 'rgb(75, 192, 192)',
-                    pointBorderColor: '#fff',
+                    pointBackgroundColor: '#4BC0C0',
+                    pointBorderColor: '#ffffff',
                     pointBorderWidth: 2,
-                    pointRadius: 4
+                    pointRadius: pointRadius,
+                    pointHoverRadius: pointHoverRadius,
+                    pointHoverBackgroundColor: '#4BC0C0',
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 2
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 plugins: {
-                    legend: { position: 'top' },
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            font: {
+                                size: 12
+                            }
+                        }
+                    },
+                    title: {
+                        display: !!aggregateInfo.interval,
+                        text: aggregateInfo.interval ? 
+                            `数据聚合: ${aggregateInfo.interval} (${dataPointCount} 个数据点)` : 
+                            `延迟趋势图 (${dataPointCount} 个数据点)`,
+                        font: {
+                            size: 14,
+                            weight: 'bold'
+                        },
+                        padding: {
+                            top: 10,
+                            bottom: 30
+                        }
+                    },
                     tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderColor: '#4BC0C0',
+                        borderWidth: 1,
                         callbacks: {
-                            afterLabel: function(context) {
-                                const dataPoint = data.ping?.[context.dataIndex];
-                                if (dataPoint && dataPoint.packetLoss !== undefined) {
-                                    return `丢包率: ${dataPoint.packetLoss.toFixed(1)}%`;
+                            title: function(context) {
+                                const dataIndex = context[0].dataIndex;
+                                const dataPoint = data.ping[dataIndex];
+                                if (dataPoint && typeof dataPoint === 'object' && dataPoint.time) {
+                                    try {
+                                        const time = new Date(dataPoint.time);
+                                        return time.toLocaleString('zh-CN');
+                                    } catch (e) {
+                                        return context[0].label;
+                                    }
                                 }
-                                return '';
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                const dataIndex = context.dataIndex;
+                                const dataPoint = data.ping[dataIndex];
+                                
+                                let tooltipLines = [`延迟: ${context.parsed.y.toFixed(1)}ms`];
+                                
+                                if (dataPoint && typeof dataPoint === 'object') {
+                                    if (dataPoint.packetLoss !== undefined && dataPoint.packetLoss !== null) {
+                                        tooltipLines.push(`丢包率: ${dataPoint.packetLoss.toFixed(1)}%`);
+                                    }
+                                    
+                                    if (dataPoint.isAggregated && dataPoint.sampleCount) {
+                                        tooltipLines.push(`样本数: ${dataPoint.sampleCount}`);
+                                        if (dataPoint.minLatency !== undefined && dataPoint.maxLatency !== undefined) {
+                                            tooltipLines.push(`范围: ${dataPoint.minLatency.toFixed(1)}ms - ${dataPoint.maxLatency.toFixed(1)}ms`);
+                                        }
+                                    }
+                                }
+                                
+                                return tooltipLines;
                             }
                         }
                     }
                 },
                 scales: {
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: '延迟 (ms)' },
-                        grid: { color: 'rgba(0, 0, 0, 0.1)' }
-                    },
                     x: {
-                        title: { display: true, text: '时间' },
-                        grid: { color: 'rgba(0, 0, 0, 0.1)' }
+                        display: true,
+                        title: {
+                            display: true,
+                            text: aggregateInfo.interval ? `时间 (${aggregateInfo.interval})` : '时间',
+                            font: {
+                                size: 12,
+                                weight: 'bold'
+                            }
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(0, 0, 0, 0.1)',
+                        },
+                        ticks: {
+                            font: {
+                                size: 10
+                            },
+                            maxTicksLimit: 15,
+                            autoSkip: true,
+                            maxRotation: 45
+                        }
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '延迟 (ms)',
+                            font: {
+                                size: 12,
+                                weight: 'bold'
+                            }
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(0, 0, 0, 0.1)',
+                        },
+                        ticks: {
+                            font: {
+                                size: 10
+                            },
+                            callback: function(value) {
+                                return value.toFixed(0) + 'ms';
+                            }
+                        }
                     }
                 },
-                interaction: { intersect: false, mode: 'index' },
-                elements: { line: { borderWidth: 3 } }
+                elements: {
+                    point: {
+                        hoverBorderWidth: 3
+                    },
+                    line: {
+                        borderJoinStyle: 'round'
+                    }
+                },
+                animation: {
+                    duration: dataPointCount > 100 ? 0 : 750,
+                    easing: 'easeInOutQuart'
+                }
             }
         });
+        
+        console.log(`✅ 图表创建成功!`);
+        console.log('   Chart.js 实例:', modalChart);
+        console.log('   数据集:', modalChart.data.datasets[0]);
+        
+        // 强制重绘
+        setTimeout(() => {
+            if (modalChart) {
+                modalChart.update('none');
+                console.log('🔄 图表已强制更新');
+            }
+        }, 100);
+        
     } catch (error) {
-        console.error('创建图表失败:', error);
+        console.error('❌ 创建图表失败:', error);
+        console.error('错误堆栈:', error.stack);
+        
+        // 显示错误信息
+        const chartContainer = document.querySelector('.chart-container-modal');
+        if (chartContainer) {
+            chartContainer.innerHTML = `
+                <div style="display: flex; justify-content: center; align-items: center; height: 100%; color: #dc3545; text-align: center;">
+                    <div>
+                        <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+                        <div style="font-weight: bold; margin-bottom: 5px;">图表渲染失败</div>
+                        <div style="font-size: 0.9em; color: #666; margin-bottom: 15px;">${error.message}</div>
+                        <button onclick="loadModalChart()" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            重新加载
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
     }
 }
 

@@ -458,95 +458,182 @@ router.get('/nodes/:nodeId/latest', (req, res) => {
     });
 });
 
-// 获取图表数据
-// 获取图表数据 - 修复时区问题
+
+// 修复的图表数据获取 - 保持向后兼容
 router.get('/chart-data/:nodeId/:ispName', (req, res) => {
     const { nodeId, ispName } = req.params;
     const { timeRange = '24h' } = req.query;
     
-    // 使用UTC时间计算时间范围
-    const now = new Date();
-    let hoursBack;
+    console.log(`📊 查询图表数据: 节点${nodeId}, ISP:${ispName}, 时间范围:${timeRange}`);
+    
+    // 根据时间范围确定策略
+    let hoursBack, useAggregation, aggregateMinutes, aggregateLabel;
     
     switch(timeRange) {
         case '1h':
             hoursBack = 1;
+            useAggregation = false;
+            aggregateLabel = '原始数据';
             break;
         case '6h':
             hoursBack = 6;
+            useAggregation = true;
+            aggregateMinutes = 5;
+            aggregateLabel = '5分钟平均';
             break;
         case '24h':
             hoursBack = 24;
+            useAggregation = true;
+            aggregateMinutes = 15;
+            aggregateLabel = '15分钟平均';
             break;
         case '7d':
             hoursBack = 24 * 7;
+            useAggregation = true;
+            aggregateMinutes = 60;
+            aggregateLabel = '1小时平均';
             break;
         default:
             hoursBack = 24;
+            useAggregation = false;
+            aggregateLabel = '原始数据';
     }
     
     // 计算起始时间（UTC）
+    const now = new Date();
     const startTimeUTC = new Date(now.getTime() - hoursBack * 60 * 60 * 1000).toISOString();
     const nowUTC = now.toISOString();
     
-    console.log(`📊 查询图表数据: 节点${nodeId}, ISP:${ispName}, 时间范围:${timeRange}`);
+    console.log(`   时间范围: ${hoursBack}小时`);
     console.log(`   起始UTC时间: ${startTimeUTC}`);
     console.log(`   当前UTC时间: ${nowUTC}`);
-    console.log(`   查询${hoursBack}小时内的数据`);
+    console.log(`   聚合策略: ${aggregateLabel}`);
 
-    db.all(`
-        SELECT 
-            test_time,
-            avg_latency,
-            packet_loss,
-            target_ip
-        FROM test_results 
-        WHERE node_id = ? 
-            AND isp_name = ?
-            AND test_type = 'ping'
-            AND test_time >= ?
-        ORDER BY test_time ASC
-    `, [nodeId, ispName, startTimeUTC], (err, rows) => {
+    let querySQL, queryParams;
+    
+    if (!useAggregation) {
+        // 直接查询原始数据（1小时及以下）
+        querySQL = `
+            SELECT 
+                test_time,
+                avg_latency,
+                packet_loss,
+                target_ip
+            FROM test_results 
+            WHERE node_id = ? 
+                AND isp_name = ?
+                AND test_type = 'ping'
+                AND test_time >= ?
+            ORDER BY test_time ASC
+        `;
+        queryParams = [nodeId, ispName, startTimeUTC];
+    } else {
+        // 使用时间窗口聚合数据
+        querySQL = `
+            SELECT 
+                datetime(
+                    strftime('%Y-%m-%d %H:', test_time) || 
+                    printf('%02d', (CAST(strftime('%M', test_time) AS INTEGER) / ${aggregateMinutes}) * ${aggregateMinutes}) ||
+                    ':00'
+                ) as time_window,
+                AVG(avg_latency) as avg_latency,
+                AVG(packet_loss) as packet_loss,
+                COUNT(*) as sample_count,
+                MIN(avg_latency) as min_latency,
+                MAX(avg_latency) as max_latency,
+                target_ip
+            FROM test_results 
+            WHERE node_id = ? 
+                AND isp_name = ?
+                AND test_type = 'ping'
+                AND test_time >= ?
+                AND avg_latency IS NOT NULL
+            GROUP BY time_window, target_ip
+            ORDER BY time_window ASC
+        `;
+        queryParams = [nodeId, ispName, startTimeUTC];
+    }
+
+    db.all(querySQL, queryParams, (err, rows) => {
         if (err) {
             console.error('获取图表数据失败:', err);
             return res.status(500).json({ error: '查询失败' });
         }
         
-        console.log(`   查询结果: 找到 ${rows.length} 条数据记录`);
+        console.log(`   查询结果: 找到 ${rows.length} 条记录`);
         if (rows.length > 0) {
-            console.log(`   最早记录: ${rows[0].test_time}`);
-            console.log(`   最晚记录: ${rows[rows.length - 1].test_time}`);
+            console.log(`   最早记录: ${rows[0].test_time || rows[0].time_window}`);
+            console.log(`   最晚记录: ${rows[rows.length - 1].test_time || rows[rows.length - 1].time_window}`);
         }
         
-        // 格式化数据
+        // 格式化数据 - 保持原有格式兼容性
         const chartData = {
             ping: [],
             labels: []
         };
         
+        // 如果有聚合信息，添加到响应中
+        if (useAggregation) {
+            chartData.aggregateInfo = {
+                interval: aggregateLabel,
+                totalPoints: rows.length,
+                timeRange: timeRange,
+                isAggregated: true
+            };
+        }
+        
         const timeLabels = new Set();
         
         rows.forEach(row => {
-            const time = new Date(row.test_time);
-            const timeLabel = time.toLocaleTimeString('zh-CN', { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                timeZone: 'UTC'  // 统一使用UTC时间显示，避免时区混乱
-            });
+            const timeField = useAggregation ? row.time_window : row.test_time;
+            const time = new Date(timeField);
+            
+            // 根据时间范围调整时间标签格式
+            let timeLabel;
+            if (timeRange === '7d') {
+                // 7天范围：显示月-日 时:分
+                timeLabel = time.toLocaleString('zh-CN', { 
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    timeZone: 'UTC'
+                });
+            } else {
+                // 其他范围：显示时:分
+                timeLabel = time.toLocaleTimeString('zh-CN', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    timeZone: 'UTC'
+                });
+            }
             
             timeLabels.add(timeLabel);
             
-            chartData.ping.push({
+            const dataPoint = {
                 x: timeLabel,
-                y: row.avg_latency,
-                packetLoss: row.packet_loss,
-                time: row.test_time
-            });
+                y: parseFloat(row.avg_latency.toFixed(1)),
+                packetLoss: parseFloat((row.packet_loss || 0).toFixed(1)),
+                time: timeField
+            };
+            
+            // 如果是聚合数据，添加额外信息
+            if (useAggregation && row.sample_count) {
+                dataPoint.sampleCount = row.sample_count;
+                dataPoint.minLatency = parseFloat(row.min_latency.toFixed(1));
+                dataPoint.maxLatency = parseFloat(row.max_latency.toFixed(1));
+                dataPoint.isAggregated = true;
+            }
+            
+            chartData.ping.push(dataPoint);
         });
         
         chartData.labels = Array.from(timeLabels).sort();
         
-        console.log(`   返回 ${chartData.ping.length} 个数据点，${chartData.labels.length} 个时间标签`);
+        console.log(`   返回数据: ${chartData.ping.length} 个数据点，${chartData.labels.length} 个时间标签`);
+        if (useAggregation) {
+            console.log(`   聚合方式: ${aggregateLabel}`);
+        }
         
         res.json(chartData);
     });
